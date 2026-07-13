@@ -5,10 +5,22 @@ import { runDueReminders } from "@/lib/reminders";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// SMTP sends are slow and the default serverless timeout (10s) kills the run
+// mid-batch. 60s is the ceiling on Hobby and is allowed on every plan; raise it
+// if you're on Pro and genuinely need longer. runDueReminders holds its own
+// slightly shorter budget so it returns a report rather than being hard-killed,
+// and anything it defers is picked up by the next run.
+export const maxDuration = 60;
+
 /**
- * Daily reminder job. Trigger once per day via any scheduler:
+ * Daily reminder job for every user, triggered by an external scheduler
+ * (cron-job.org or similar) once a day:
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://host/api/cron/reminders
- * or Vercel Cron (see vercel.json), which sends the secret automatically.
+ * Schedulers that can't set headers may pass ?secret=$CRON_SECRET instead —
+ * prefer the header, since query strings show up in logs.
+ *
+ * Safe to call more than once a day: sent reminders are marked, so a repeat run
+ * only picks up what's still outstanding.
  */
 async function handle(req: NextRequest) {
   const secret = process.env.CRON_SECRET;

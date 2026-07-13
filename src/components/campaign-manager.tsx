@@ -17,6 +17,7 @@ import {
 } from "@/lib/campaign";
 import { StatusBadge } from "@/components/status-badge";
 import { EntityCombobox } from "@/components/entity-combobox";
+import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,6 +102,7 @@ export function CampaignManager({
   options: { clients: Option[]; sales: Option[]; vendors: Option[] };
 }) {
   const router = useRouter();
+  const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -227,13 +229,18 @@ export function CampaignManager({
 
   const remove = useCallback(
     async (c: CampaignRow) => {
-      if (!confirm(`Delete the ${c.client.name} campaign?`)) return;
+      const ok = await confirm({
+        title: "Delete campaign?",
+        description: `The ${c.client.name} campaign in ${c.city} and its reminder will be permanently deleted.`,
+        confirmLabel: "Delete campaign",
+      });
+      if (!ok) return;
       const res = await apiFetch(`/api/campaigns/${c.id}`, { method: "DELETE" });
       if (!res.ok) return toast.error(apiError(res.data));
       toast.success("Campaign deleted");
       router.refresh();
     },
-    [router],
+    [router, confirm],
   );
 
   const columns = useMemo<ColumnDef<CampaignRow>[]>(
@@ -556,6 +563,8 @@ export function CampaignManager({
           </form>
         </DialogContent>
       </Dialog>
+
+      {confirmDialog}
     </div>
   );
 }

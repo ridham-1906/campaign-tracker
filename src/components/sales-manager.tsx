@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { apiError, apiFetch } from "@/lib/http";
 import { SalesForm } from "@/components/entity-forms";
+import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -24,6 +25,7 @@ type Item = { id: string; name: string; email: string; count: number };
 
 export function SalesManager({ items }: { items: Item[] }) {
   const router = useRouter();
+  const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
 
@@ -41,13 +43,18 @@ export function SalesManager({ items }: { items: Item[] }) {
     async (item: Item) => {
       if (item.count > 0)
         return toast.error(`In use by ${item.count} campaign(s)`);
-      if (!confirm(`Delete ${item.name}?`)) return;
+      const ok = await confirm({
+        title: "Delete sales person?",
+        description: `${item.name} (${item.email}) will be permanently deleted.`,
+        confirmLabel: "Delete sales person",
+      });
+      if (!ok) return;
       const res = await apiFetch(`/api/sales/${item.id}`, { method: "DELETE" });
       if (!res.ok) return toast.error(apiError(res.data));
       toast.success("Sales person deleted");
       router.refresh();
     },
-    [router],
+    [router, confirm],
   );
 
   const columns = useMemo<ColumnDef<Item>[]>(
@@ -155,6 +162,8 @@ export function SalesManager({ items }: { items: Item[] }) {
           />
         </DialogContent>
       </Dialog>
+
+      {confirmDialog}
     </div>
   );
 }

@@ -1,24 +1,34 @@
 import "server-only";
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 
 /**
  * Build a Gmail transport for a given backend user, using the app password
  * stored on their account. Each user sends from their own mailbox.
+ *
+ * Pass `pool: true` when sending a batch for the same user (the cron job):
+ * one authenticated connection is reused across messages instead of paying
+ * the connect+TLS+auth handshake per email, which is what makes a serverless
+ * batch run slow enough to hit the function timeout.
  */
-export function createTransport(fromEmail: string, appPassword: string) {
+export function createTransport(
+  fromEmail: string,
+  appPassword: string,
+  { pool = false }: { pool?: boolean } = {},
+) {
   return nodemailer.createTransport({
     service: "gmail",
     auth: {
       user: fromEmail,
       pass: appPassword,
     },
+    ...(pool ? { pool: true, maxConnections: 1, maxMessages: 100 } : {}),
   });
 }
 
-export type ReminderEmailInput = {
+/** Everything needed to compose the email — no credentials. */
+export type ReminderMessageInput = {
   fromName: string;
   fromEmail: string;
-  appPassword: string;
   to: string;
   salesName: string;
   clientName: string;
@@ -31,9 +41,10 @@ export type ReminderEmailInput = {
   appUrl: string;
 };
 
-export async function sendReminderEmail(input: ReminderEmailInput) {
-  const transport = createTransport(input.fromEmail, input.appPassword);
+/** A message plus the credentials to open a transport for it. */
+export type ReminderEmailInput = ReminderMessageInput & { appPassword: string };
 
+function buildReminder(input: ReminderMessageInput) {
   const end = input.endDate.toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -58,7 +69,7 @@ export async function sendReminderEmail(input: ReminderEmailInput) {
         ${row("Days left", String(input.daysLeft))}
       </tbody>
     </table>
-    
+
     <p style="color:#999;font-size:12px;margin-top:24px">Sent by ${input.fromName} via Campaign Tracker</p>
   </div>`;
 
@@ -74,13 +85,31 @@ Days left: ${input.daysLeft}
 
 `;
 
-  return transport.sendMail({
+  return {
     from: `"${input.fromName}" <${input.fromEmail}>`,
     to: input.to,
     subject,
     text,
     html,
-  });
+  };
+}
+
+/** Send one reminder over an existing (already authenticated) transport. */
+export async function sendReminderWith(
+  transport: Transporter,
+  input: ReminderMessageInput,
+) {
+  return transport.sendMail(buildReminder(input));
+}
+
+/** Send a single one-off reminder, opening and closing its own transport. */
+export async function sendReminderEmail(input: ReminderEmailInput) {
+  const transport = createTransport(input.fromEmail, input.appPassword);
+  try {
+    return await sendReminderWith(transport, input);
+  } finally {
+    transport.close();
+  }
 }
 
 function row(label: string, value: string) {

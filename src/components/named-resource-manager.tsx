@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { apiError, apiFetch } from "@/lib/http";
 import { NamedResourceForm } from "@/components/entity-forms";
+import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -33,6 +34,7 @@ export function NamedResourceManager({
   items: Item[];
 }) {
   const router = useRouter();
+  const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
 
@@ -50,7 +52,12 @@ export function NamedResourceManager({
     async (item: Item) => {
       if (item.count > 0)
         return toast.error(`In use by ${item.count} campaign(s)`);
-      if (!confirm(`Delete ${item.name}?`)) return;
+      const ok = await confirm({
+        title: `Delete ${singular.toLowerCase()}?`,
+        description: `${item.name} will be permanently deleted.`,
+        confirmLabel: `Delete ${singular.toLowerCase()}`,
+      });
+      if (!ok) return;
       const res = await apiFetch(`/api/${resource}/${item.id}`, {
         method: "DELETE",
       });
@@ -58,7 +65,7 @@ export function NamedResourceManager({
       toast.success(`${singular} deleted`);
       router.refresh();
     },
-    [resource, singular, router],
+    [resource, singular, router, confirm],
   );
 
   const columns = useMemo<ColumnDef<Item>[]>(
@@ -156,6 +163,8 @@ export function NamedResourceManager({
           />
         </DialogContent>
       </Dialog>
+
+      {confirmDialog}
     </div>
   );
 }
