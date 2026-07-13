@@ -51,7 +51,6 @@ export async function sendReminderEmail(input: ReminderEmailInput) {
     <table style="width:100%;border-collapse:collapse;font-size:14px">
       <tbody>
         ${row("Client", input.clientName)}
-        ${row("Vendor", input.vendorName)}
         ${row("Type", input.type)}
         ${row("City", input.city)}
         ${row("Location", input.location)}
@@ -67,7 +66,6 @@ export async function sendReminderEmail(input: ReminderEmailInput) {
 Hi ${input.salesName}, one of your campaigns is about to end.
 
 Client:   ${input.clientName}
-Vendor:   ${input.vendorName}
 Type:     ${input.type}
 City:     ${input.city}
 Location: ${input.location}
