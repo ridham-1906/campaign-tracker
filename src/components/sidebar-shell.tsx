@@ -1,8 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import Link from "next/link";
-import { Megaphone, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -48,20 +47,18 @@ export function SidebarShell() {
     <aside
       className={cn(
         "shrink-0 border-b bg-muted/20 transition-[width] duration-200 md:border-r md:border-b-0",
-        collapsed ? "md:w-14" : "md:w-60",
+        collapsed ? "md:w-14" : "md:w-50",
       )}
     >
-      <div className="flex h-14 items-center justify-between gap-2 px-4 md:px-2.5">
-        <Link
-          href="/"
+      <div className="flex h-14 items-center justify-between px-4 md:px-2.5">
+        <span
           className={cn(
-            "flex min-w-0 items-center gap-2 font-semibold tracking-tight",
+            "text-xs font-medium tracking-wide text-muted-foreground/70 uppercase",
             collapsed && "md:hidden",
           )}
         >
-          <Megaphone className="size-5 shrink-0" />
-          <span className="truncate">Campaign&nbsp;Tracker</span>
-        </Link>
+          Menu
+        </span>
         <Button
           variant="ghost"
           size="icon-sm"

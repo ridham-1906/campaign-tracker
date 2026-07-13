@@ -12,6 +12,7 @@ import {
   formatDate,
   isExpiringSoon,
   lifecycleState,
+  startOfDay,
   toDateInputValue,
 } from "@/lib/campaign";
 import { StatusBadge } from "@/components/status-badge";
@@ -106,13 +107,21 @@ export function CampaignManager({
   const [reminderTouched, setReminderTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "LIVE" | "EXPIRING" | "ENDED"
+    "all" | "LIVE" | "EXPIRING" | "ENDED" | "SENT_TODAY"
   >("all");
 
   const missingRefs =
     options.clients.length === 0 ||
     options.sales.length === 0 ||
     options.vendors.length === 0;
+
+  const isSentToday = useCallback((c: CampaignRow) => {
+    if (!c.reminder?.sent || !c.reminder.sentAt) return false;
+    return (
+      startOfDay(new Date(c.reminder.sentAt)).getTime() ===
+      startOfDay(new Date()).getTime()
+    );
+  }, []);
 
   const stats = useMemo(() => {
     const live = campaigns.filter(
@@ -121,8 +130,15 @@ export function CampaignManager({
     const expiring = campaigns.filter((c) =>
       isExpiringSoon({ status: c.status, endDate: new Date(c.endDate) }),
     ).length;
-    return { total: campaigns.length, live, ended: campaigns.length - live, expiring };
-  }, [campaigns]);
+    const sentToday = campaigns.filter(isSentToday).length;
+    return {
+      total: campaigns.length,
+      live,
+      ended: campaigns.length - live,
+      expiring,
+      sentToday,
+    };
+  }, [campaigns, isSentToday]);
 
   const filteredCampaigns = useMemo(() => {
     if (statusFilter === "all") return campaigns;
@@ -130,12 +146,13 @@ export function CampaignManager({
       return campaigns.filter((c) =>
         isExpiringSoon({ status: c.status, endDate: new Date(c.endDate) }),
       );
+    if (statusFilter === "SENT_TODAY") return campaigns.filter(isSentToday);
     return campaigns.filter(
       (c) =>
         lifecycleState({ status: c.status, endDate: new Date(c.endDate) }) ===
         statusFilter,
     );
-  }, [campaigns, statusFilter]);
+  }, [campaigns, statusFilter, isSentToday]);
 
   function set<K extends keyof FormState>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -361,7 +378,7 @@ export function CampaignManager({
         <Button onClick={openAdd}>+ New campaign</Button>
       </div>
 
-      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat
           label="Total"
           value={stats.total}
@@ -388,6 +405,14 @@ export function CampaignManager({
           value={stats.ended}
           active={statusFilter === "ENDED"}
           onClick={() => setStatusFilter((f) => (f === "ENDED" ? "all" : "ENDED"))}
+        />
+        <Stat
+          label="Reminders sent today"
+          value={stats.sentToday}
+          active={statusFilter === "SENT_TODAY"}
+          onClick={() =>
+            setStatusFilter((f) => (f === "SENT_TODAY" ? "all" : "SENT_TODAY"))
+          }
         />
       </div>
 
@@ -417,11 +442,13 @@ export function CampaignManager({
               ) : (
                 <div className="flex flex-col items-center gap-3 py-16 text-center">
                   <p className="text-sm text-muted-foreground">
-                    No{" "}
+                    No campaigns{" "}
                     {statusFilter === "EXPIRING"
-                      ? "expiring"
-                      : statusFilter.toLowerCase()}{" "}
-                    campaigns.
+                      ? "expiring soon"
+                      : statusFilter === "SENT_TODAY"
+                        ? "with a reminder sent today"
+                        : `that are ${statusFilter.toLowerCase()}`}
+                    .
                   </p>
                   <Button variant="outline" onClick={() => setStatusFilter("all")}>
                     Clear filter

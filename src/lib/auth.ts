@@ -2,6 +2,8 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
+import { connectDB } from "@/lib/db";
+import { User } from "@/models";
 import {
   COOKIE_NAME,
   SESSION_MAX_AGE,
@@ -41,7 +43,22 @@ export async function getSession(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
-  return verifySessionToken(token);
+
+  const session = await verifySessionToken(token);
+  if (!session) return null;
+
+  // The signed cookie can outlive the user it points to (e.g. a reseeded
+  // database) — treat that as logged out rather than letting requests act
+  // on behalf of a nonexistent account. Cookies can only be cleared from a
+  // Server Action or Route Handler, and this runs from plain Server
+  // Component renders too, so just report "no session" here; the stale
+  // cookie is harmless since this check keeps failing until a real login
+  // overwrites it.
+  await connectDB();
+  const exists = await User.exists({ _id: session.userId });
+  if (!exists) return null;
+
+  return session;
 }
 
 /** Use in server components / actions that require a logged-in user. */
