@@ -1,15 +1,23 @@
 import "server-only";
 import type { Transporter } from "nodemailer";
 import { connectDB } from "@/lib/db";
-import { Reminder } from "@/models";
-import { createTransport, sendReminderWith } from "@/lib/mailer";
-import { daysUntil, startOfDay } from "@/lib/campaign";
+import { Campaign } from "@/models";
+import {
+  createTransport,
+  sendReminderWith,
+  type ReminderLocation,
+} from "@/lib/mailer";
+import { daysUntil, lifecycleState, startOfDay } from "@/lib/campaign";
 import { decryptSecret } from "@/lib/crypto";
 
 export type ReminderRunResult = {
   date: string;
+  /** Campaigns with at least one due location (i.e. emails to send). */
   due: number;
+  /** Emails actually sent. */
   sent: number;
+  /** Locations covered by those emails. */
+  locationsSent: number;
   skipped: number;
   /** Left unsent because the run ran out of time; picked up on the next run. */
   deferred: number;
@@ -33,29 +41,39 @@ const DEFAULT_TIME_BUDGET_MS = Number(
   process.env.REMINDER_TIME_BUDGET_MS ?? 25_000,
 );
 
-type PopulatedCampaign = {
+type PopulatedLocation = {
   _id: unknown;
   city: string;
-  type: string;
   location: string;
+  type: string;
   status: string;
   endDate: Date;
+  reminderDate: Date;
+  reminderSent: boolean;
+  reminderSentAt?: Date | null;
+};
+
+type PopulatedCampaign = {
+  _id: unknown;
+  locations: PopulatedLocation[];
   salesId?: { name: string; email: string };
-  vendorId?: { name: string };
   clientId?: { name: string };
   userId?: { _id: unknown; name: string; email: string; appPassword: string };
+  save: () => Promise<unknown>;
 };
 
 /**
- * Find every unsent reminder scheduled for `now`'s day or earlier (catching up
- * on any backlog from days the job didn't run) and email the campaign's sales
- * person, using the days-remaining as of today. Called by the daily cron route.
+ * Email each campaign's sales person about the locations that are due — one
+ * message per campaign listing every due location, rather than one per site.
  *
- * Covers every user in one run: reminders are grouped by their campaign's owner
- * and sent from that owner's own mailbox, over a single pooled connection per
- * owner. Idempotent — reminders are marked sent, so re-running won't
- * double-send, and anything not reached (error or time budget) is retried on
- * the next run.
+ * "Due" means the location's reminder date is today or earlier (so a day the
+ * job didn't run is caught up automatically), it hasn't been sent, and the
+ * location hasn't already ended.
+ *
+ * Covers every user in one run: campaigns are grouped by owner and sent from
+ * that owner's own mailbox over a single pooled connection. Idempotent — sent
+ * locations are marked, so re-running won't double-send, and anything not
+ * reached (error or time budget) is retried on the next run.
  */
 export async function runDueReminders(
   now: Date = new Date(),
@@ -63,59 +81,67 @@ export async function runDueReminders(
 ): Promise<ReminderRunResult> {
   await connectDB();
 
-  const startedAt = Date.now();
-  const deadline = startedAt + timeBudgetMs;
+  const deadline = Date.now() + timeBudgetMs;
 
   const dayStart = startOfDay(now);
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
 
-  const due = await Reminder.find({
-    sent: false,
-    date: { $lt: dayEnd },
+  // Reminders live on the locations, so this hands back whole campaigns with
+  // their due locations already together — exactly the shape the digest needs.
+  const campaigns = (await Campaign.find({
+    locations: {
+      $elemMatch: { reminderSent: false, reminderDate: { $lt: dayEnd } },
+    },
   })
-    .populate({
-      path: "campaignId",
-      populate: [
-        { path: "salesId", select: "name email" },
-        { path: "vendorId", select: "name" },
-        { path: "clientId", select: "name" },
-        { path: "userId", select: "name email appPassword" },
-      ],
-    })
-    .exec();
+    .populate("salesId", "name email")
+    .populate("clientId", "name")
+    .populate("userId", "name email appPassword")
+    .exec()) as unknown as PopulatedCampaign[];
 
   const result: ReminderRunResult = {
     date: dayStart.toISOString(),
-    due: due.length,
+    due: 0,
     sent: 0,
+    locationsSent: 0,
     skipped: 0,
     deferred: 0,
     errors: [],
   };
 
-  // Group the sendable reminders by owning user, dropping any whose campaign
-  // or relations were deleted, or whose campaign already ended.
-  type Job = { reminder: (typeof due)[number]; campaign: PopulatedCampaign };
+  /** Locations that are unsent, past due, and not already finished. */
+  function dueLocationsOf(campaign: PopulatedCampaign) {
+    return campaign.locations.filter(
+      (l) =>
+        !l.reminderSent &&
+        new Date(l.reminderDate) < dayEnd &&
+        lifecycleState({ status: l.status, endDate: new Date(l.endDate) }, now) ===
+          "LIVE",
+    );
+  }
+
+  type Job = { campaign: PopulatedCampaign; locations: PopulatedLocation[] };
   const byUser = new Map<string, Job[]>();
 
-  for (const reminder of due) {
-    const campaign = reminder.campaignId as unknown as PopulatedCampaign | null;
+  for (const campaign of campaigns) {
+    const locations = dueLocationsOf(campaign);
 
+    // Relations may have been deleted, or every due location already ended.
     if (
-      !campaign ||
       !campaign.salesId ||
       !campaign.userId ||
-      campaign.status === "ENDED"
+      !campaign.clientId ||
+      locations.length === 0
     ) {
       result.skipped++;
       continue;
     }
 
+    result.due++;
     const userId = String(campaign.userId._id);
     const jobs = byUser.get(userId);
-    if (jobs) jobs.push({ reminder, campaign });
-    else byUser.set(userId, [{ reminder, campaign }]);
+    if (jobs) jobs.push({ campaign, locations });
+    else byUser.set(userId, [{ campaign, locations }]);
   }
 
   async function runUser(jobs: Job[]) {
@@ -138,7 +164,7 @@ export async function runDueReminders(
     }
 
     try {
-      for (const { reminder, campaign } of jobs) {
+      for (const { campaign, locations } of jobs) {
         if (Date.now() >= deadline) {
           result.deferred++;
           continue;
@@ -150,20 +176,21 @@ export async function runDueReminders(
             fromEmail: owner.email,
             to: campaign.salesId!.email,
             salesName: campaign.salesId!.name,
-            clientName: campaign.clientId?.name ?? "—",
-            vendorName: campaign.vendorId?.name ?? "—",
-            city: campaign.city,
-            type: campaign.type,
-            location: campaign.location,
-            endDate: new Date(campaign.endDate),
-            daysLeft: Math.max(0, daysUntil(new Date(campaign.endDate), now)),
-            appUrl: process.env.APP_URL ?? "http://localhost:3000",
+            clientName: campaign.clientId!.name,
+            locations: locations.map(toReminderLocation(now)),
           });
 
-          reminder.sent = true;
-          reminder.sentAt = new Date();
-          await reminder.save();
+          // One email covered all of them, so mark them together and persist
+          // the campaign once.
+          const sentAt = new Date();
+          for (const l of locations) {
+            l.reminderSent = true;
+            l.reminderSentAt = sentAt;
+          }
+          await campaign.save();
+
           result.sent++;
+          result.locationsSent += locations.length;
         } catch (err) {
           result.errors.push({
             campaignId: String(campaign._id),
@@ -191,4 +218,15 @@ export async function runDueReminders(
   await Promise.all(workers);
 
   return result;
+}
+
+/** Days-left is computed fresh at send time, not when the reminder was set. */
+export function toReminderLocation(now: Date) {
+  return (l: PopulatedLocation): ReminderLocation => ({
+    location: l.location,
+    city: l.city,
+    type: l.type,
+    endDate: new Date(l.endDate),
+    daysLeft: Math.max(0, daysUntil(new Date(l.endDate), now)),
+  });
 }

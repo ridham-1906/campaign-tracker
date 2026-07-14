@@ -16,22 +16,20 @@ import {
   toDateInputValue,
 } from "@/lib/campaign";
 import { StatusBadge } from "@/components/status-badge";
-import { EntityCombobox } from "@/components/entity-combobox";
 import { useConfirm } from "@/components/use-confirm";
+import {
+  CampaignForm,
+  emptyCampaign,
+  effectiveReminder,
+  type CampaignDraft,
+  type FormOptions,
+  type LocationDraft,
+} from "@/components/campaign-form";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -39,59 +37,86 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type Option = { id: string; name: string };
 type Person = { id: string; name: string; email?: string };
-export type CampaignRow = {
+
+export type LocationRow = {
   id: string;
   city: string;
-  type: string;
   location: string;
+  type: string;
   days: number;
   status: string;
-  startDate: string;
-  endDate: string;
-  sales: Person;
   vendor: Person;
-  client: Person;
-  reminder: { id: string; date: string; sent: boolean; sentAt: string | null } | null;
-};
-
-type FormState = {
-  clientId: string;
-  salesId: string;
-  vendorId: string;
-  type: string;
-  city: string;
-  location: string;
   startDate: string;
   endDate: string;
-  reminderDate: string;
-  status: string;
+  reminder: { date: string; sent: boolean; sentAt: string | null };
 };
 
-const EMPTY: FormState = {
-  clientId: "",
-  salesId: "",
-  vendorId: "",
-  type: "",
-  city: "",
-  location: "",
-  startDate: "",
-  endDate: "",
-  reminderDate: "",
-  status: "LIVE",
+export type CampaignRow = {
+  id: string;
+  client: Person;
+  sales: Person;
+  locations: LocationRow[];
 };
 
-function addDaysISO(iso: string, days: number) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  d.setDate(d.getDate() + days);
-  return toDateInputValue(d);
+/** A location satisfies the `{status, endDate}` shape the helpers expect. */
+function stateOf(l: LocationRow) {
+  return lifecycleState({ status: l.status, endDate: new Date(l.endDate) });
 }
 
-function byDate(key: "startDate" | "endDate") {
-  return (a: { original: CampaignRow }, b: { original: CampaignRow }) =>
-    new Date(a.original[key]).getTime() - new Date(b.original[key]).getTime();
+function expiringSoon(l: LocationRow) {
+  return isExpiringSoon({ status: l.status, endDate: new Date(l.endDate) });
+}
+
+function sentToday(l: LocationRow) {
+  if (!l.reminder.sent || !l.reminder.sentAt) return false;
+  return (
+    startOfDay(new Date(l.reminder.sentAt)).getTime() ===
+    startOfDay(new Date()).getTime()
+  );
+}
+
+// Campaign-level rollups over the locations.
+const anyLive = (c: CampaignRow) => c.locations.some((l) => stateOf(l) === "LIVE");
+const allEnded = (c: CampaignRow) =>
+  c.locations.length > 0 && c.locations.every((l) => stateOf(l) === "ENDED");
+const anyExpiring = (c: CampaignRow) => c.locations.some(expiringSoon);
+const anySentToday = (c: CampaignRow) => c.locations.some(sentToday);
+
+/** Soonest end date across the campaign — what the list is ordered by. */
+function earliestEnd(c: CampaignRow) {
+  return Math.min(...c.locations.map((l) => new Date(l.endDate).getTime()));
+}
+
+function latestEnd(c: CampaignRow) {
+  return Math.max(...c.locations.map((l) => new Date(l.endDate).getTime()));
+}
+
+function earliestStart(c: CampaignRow) {
+  return Math.min(...c.locations.map((l) => new Date(l.startDate).getTime()));
+}
+
+function toDraft(c: CampaignRow): CampaignDraft {
+  return {
+    clientId: c.client.id,
+    salesId: c.sales.id,
+    locations: c.locations.map(
+      (l): LocationDraft => ({
+        id: l.id,
+        city: l.city,
+        location: l.location,
+        type: l.type,
+        vendorId: l.vendor.id,
+        startDate: toDateInputValue(l.startDate),
+        endDate: toDateInputValue(l.endDate),
+        reminderDate: toDateInputValue(l.reminder.date),
+        // Existing reminders keep their stored date rather than snapping back
+        // to end-minus-lead when the form opens.
+        reminderTouched: true,
+        status: l.status,
+      }),
+    ),
+  };
 }
 
 export function CampaignManager({
@@ -99,114 +124,81 @@ export function CampaignManager({
   options,
 }: {
   campaigns: CampaignRow[];
-  options: { clients: Option[]; sales: Option[]; vendors: Option[] };
+  options: FormOptions;
 }) {
   const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [reminderTouched, setReminderTouched] = useState(false);
+  const [draft, setDraft] = useState<CampaignDraft>(emptyCampaign);
   const [saving, setSaving] = useState(false);
   const [statusFilter, setStatusFilter] = useState<
     "all" | "LIVE" | "EXPIRING" | "ENDED" | "SENT_TODAY"
   >("all");
 
   const missingRefs =
-    options.clients.length === 0 ||
-    options.sales.length === 0 ||
-    options.vendors.length === 0;
-
-  const isSentToday = useCallback((c: CampaignRow) => {
-    if (!c.reminder?.sent || !c.reminder.sentAt) return false;
-    return (
-      startOfDay(new Date(c.reminder.sentAt)).getTime() ===
-      startOfDay(new Date()).getTime()
-    );
-  }, []);
+    options.clients.length === 0 || options.sales.length === 0;
 
   const stats = useMemo(() => {
-    const live = campaigns.filter(
-      (c) => lifecycleState({ status: c.status, endDate: new Date(c.endDate) }) === "LIVE",
-    ).length;
-    const expiring = campaigns.filter((c) =>
-      isExpiringSoon({ status: c.status, endDate: new Date(c.endDate) }),
-    ).length;
-    const sentToday = campaigns.filter(isSentToday).length;
+    const live = campaigns.filter(anyLive).length;
     return {
       total: campaigns.length,
       live,
-      ended: campaigns.length - live,
-      expiring,
-      sentToday,
+      ended: campaigns.filter(allEnded).length,
+      expiring: campaigns.filter(anyExpiring).length,
+      sentToday: campaigns.filter(anySentToday).length,
     };
-  }, [campaigns, isSentToday]);
+  }, [campaigns]);
 
   const filteredCampaigns = useMemo(() => {
-    if (statusFilter === "all") return campaigns;
-    if (statusFilter === "EXPIRING")
-      return campaigns.filter((c) =>
-        isExpiringSoon({ status: c.status, endDate: new Date(c.endDate) }),
-      );
-    if (statusFilter === "SENT_TODAY") return campaigns.filter(isSentToday);
-    return campaigns.filter(
-      (c) =>
-        lifecycleState({ status: c.status, endDate: new Date(c.endDate) }) ===
-        statusFilter,
-    );
-  }, [campaigns, statusFilter, isSentToday]);
-
-  function set<K extends keyof FormState>(key: K, value: string) {
-    setForm((f) => ({ ...f, [key]: value }));
-  }
+    switch (statusFilter) {
+      case "LIVE":
+        return campaigns.filter(anyLive);
+      case "ENDED":
+        return campaigns.filter(allEnded);
+      case "EXPIRING":
+        return campaigns.filter(anyExpiring);
+      case "SENT_TODAY":
+        return campaigns.filter(anySentToday);
+      default:
+        return campaigns;
+    }
+  }, [campaigns, statusFilter]);
 
   function openAdd() {
     setEditingId(null);
-    setForm(EMPTY);
-    setReminderTouched(false);
+    setDraft(emptyCampaign());
     setOpen(true);
   }
 
   const openEdit = useCallback((c: CampaignRow) => {
     setEditingId(c.id);
-    setForm({
-      clientId: c.client.id,
-      salesId: c.sales.id,
-      vendorId: c.vendor.id,
-      type: c.type,
-      city: c.city,
-      location: c.location,
-      startDate: toDateInputValue(c.startDate),
-      endDate: toDateInputValue(c.endDate),
-      reminderDate: c.reminder ? toDateInputValue(c.reminder.date) : "",
-      status: c.status,
-    });
-    setReminderTouched(true);
+    setDraft(toDraft(c));
     setOpen(true);
   }, []);
 
-  const effectiveReminder =
-    reminderTouched || !form.endDate
-      ? form.reminderDate
-      : addDaysISO(form.endDate, -7);
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  async function save() {
     setSaving(true);
     const payload = JSON.stringify({
-      clientId: form.clientId,
-      salesId: form.salesId,
-      vendorId: form.vendorId,
-      city: form.city,
-      type: form.type,
-      location: form.location,
-      startDate: form.startDate,
-      endDate: form.endDate,
-      reminderDate: effectiveReminder || undefined,
-      status: form.status,
+      clientId: draft.clientId,
+      salesId: draft.salesId,
+      locations: draft.locations.map((l) => ({
+        ...(l.id ? { id: l.id } : {}),
+        city: l.city,
+        location: l.location,
+        type: l.type,
+        vendorId: l.vendorId,
+        startDate: l.startDate,
+        endDate: l.endDate,
+        reminderDate: effectiveReminder(l) || undefined,
+        status: l.status,
+      })),
     });
     const res = editingId
-      ? await apiFetch(`/api/campaigns/${editingId}`, { method: "PATCH", body: payload })
+      ? await apiFetch(`/api/campaigns/${editingId}`, {
+          method: "PATCH",
+          body: payload,
+        })
       : await apiFetch(`/api/campaigns`, { method: "POST", body: payload });
     setSaving(false);
     if (!res.ok) return toast.error(apiError(res.data));
@@ -215,13 +207,23 @@ export function CampaignManager({
     router.refresh();
   }
 
+  /** Omit `locationId` to send one digest covering every live location. */
   const sendReminder = useCallback(
-    async (c: CampaignRow) => {
-      const res = await apiFetch(`/api/campaigns/${c.id}/send-reminder`, {
-        method: "POST",
-      });
+    async (c: CampaignRow, locationId?: string) => {
+      const res = await apiFetch<{ locations: number }>(
+        `/api/campaigns/${c.id}/send-reminder`,
+        {
+          method: "POST",
+          body: JSON.stringify(locationId ? { locationId } : {}),
+        },
+      );
       if (!res.ok) return toast.error(apiError(res.data, "Failed to send"));
-      toast.success(`Reminder sent to ${c.sales.email ?? c.sales.name}`);
+      const n = res.data?.locations ?? 1;
+      toast.success(
+        `Reminder for ${n} location${n === 1 ? "" : "s"} sent to ${
+          c.sales.email ?? c.sales.name
+        }`,
+      );
       router.refresh();
     },
     [router],
@@ -231,7 +233,7 @@ export function CampaignManager({
     async (c: CampaignRow) => {
       const ok = await confirm({
         title: "Delete campaign?",
-        description: `The ${c.client.name} campaign in ${c.city} and its reminder will be permanently deleted.`,
+        description: `The ${c.client.name} campaign and all ${c.locations.length} of its locations will be permanently deleted.`,
         confirmLabel: "Delete campaign",
       });
       if (!ok) return;
@@ -259,92 +261,76 @@ export function CampaignManager({
         header: "Sales",
       },
       {
-        id: "vendor",
-        accessorFn: (c) => c.vendor.name,
-        header: "Vendor",
+        id: "locations",
+        // Searchable by any of its locations' names, cities and vendors.
+        accessorFn: (c) =>
+          c.locations
+            .map((l) => `${l.location} ${l.city} ${l.type} ${l.vendor.name}`)
+            .join(" "),
+        header: "Locations",
+        cell: ({ row }) => {
+          const n = row.original.locations.length;
+          return (
+            <span className="text-muted-foreground">
+              {n} location{n === 1 ? "" : "s"}
+            </span>
+          );
+        },
       },
       {
-        accessorKey: "type",
-        header: "Type",
-      },
-      {
-        accessorKey: "city",
-        header: "City",
-      },
-      {
-        accessorKey: "location",
-        header: "Location",
-        cell: ({ getValue }) => (
-          <span className="text-muted-foreground">{getValue<string>()}</span>
+        id: "dates",
+        accessorFn: (c) => earliestStart(c),
+        header: "Runs",
+        enableGlobalFilter: false,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {formatDate(new Date(earliestStart(row.original)))} –{" "}
+            {formatDate(new Date(latestEnd(row.original)))}
+          </span>
         ),
       },
       {
-        id: "startDate",
-        accessorFn: (c) => formatDate(c.startDate),
-        header: "Start date",
-        sortingFn: byDate("startDate"),
-      },
-      {
         id: "endDate",
-        accessorFn: (c) => formatDate(c.endDate),
-        header: "End date",
-        sortingFn: byDate("endDate"),
-      },
-      {
-        id: "daysLeft",
-        accessorFn: (c) => daysUntil(new Date(c.endDate)),
-        header: "Days left",
+        accessorFn: (c) => earliestEnd(c),
+        header: "Next to end",
         enableGlobalFilter: false,
         cell: ({ row }) => {
-          const c = row.original;
-          const left = daysUntil(new Date(c.endDate));
-          const ended =
-            lifecycleState({ status: c.status, endDate: new Date(c.endDate) }) ===
-            "ENDED";
+          const left = daysUntil(new Date(earliestEnd(row.original)));
+          const ended = allEnded(row.original);
           return (
             <span
               className={
                 ended ? "text-muted-foreground" : left <= 7 ? "text-amber-600" : ""
               }
             >
-              {left < 0 ? `${Math.abs(left)}d ago` : `${left}d`}
-            </span>
-          );
-        },
-      },
-      {
-        id: "reminder",
-        accessorFn: (c) =>
-          c.reminder
-            ? c.reminder.sent
-              ? `Sent ${formatDate(c.reminder.sentAt ?? c.reminder.date)}`
-              : formatDate(c.reminder.date)
-            : "—",
-        header: "Reminder",
-        cell: ({ getValue, row }) => {
-          const sent = row.original.reminder?.sent ?? false;
-          return (
-            <span
-              className={cn(
-                "inline-flex rounded-md px-1.5 py-0.5",
-                sent
-                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                  : "text-muted-foreground",
-              )}
-            >
-              {getValue<string>()}
+              {ended ? "—" : left < 0 ? `${Math.abs(left)}d ago` : `${left}d`}
             </span>
           );
         },
       },
       {
         id: "status",
-        accessorFn: (c) =>
-          lifecycleState({ status: c.status, endDate: new Date(c.endDate) }),
+        accessorFn: (c) => (allEnded(c) ? "ENDED" : "LIVE"),
         header: "Status",
-        cell: ({ row }) => (
-          <StatusBadge status={row.original.status} endDate={row.original.endDate} />
-        ),
+        cell: ({ row }) => {
+          const c = row.original;
+          const live = c.locations.filter((l) => stateOf(l) === "LIVE").length;
+          const ended = c.locations.length - live;
+          return (
+            <span className="flex items-center gap-1.5">
+              {live > 0 && (
+                <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  {live} live
+                </span>
+              )}
+              {ended > 0 && (
+                <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {ended} ended
+                </span>
+              )}
+            </span>
+          );
+        },
       },
       {
         id: "actions",
@@ -354,8 +340,11 @@ export function CampaignManager({
         meta: { className: "w-0 text-right" },
         cell: ({ row }) => (
           <RowActions>
-            <DropdownMenuItem onClick={() => sendReminder(row.original)}>
-              Send reminder
+            <DropdownMenuItem
+              disabled={!anyLive(row.original)}
+              onClick={() => sendReminder(row.original)}
+            >
+              Send reminder (all live)
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => openEdit(row.original)}>
               Edit
@@ -371,6 +360,92 @@ export function CampaignManager({
       },
     ],
     [openEdit, remove, sendReminder],
+  );
+
+  const renderLocations = useCallback(
+    (c: CampaignRow) => (
+      <div className="px-4 py-3">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted-foreground">
+              <th className="pb-2 pr-4 font-medium">Location</th>
+              <th className="pb-2 pr-4 font-medium">City</th>
+              <th className="pb-2 pr-4 font-medium">Type</th>
+              <th className="pb-2 pr-4 font-medium">Vendor</th>
+              <th className="pb-2 pr-4 font-medium">Start</th>
+              <th className="pb-2 pr-4 font-medium">End</th>
+              <th className="pb-2 pr-4 font-medium">Days left</th>
+              <th className="pb-2 pr-4 font-medium">Reminder</th>
+              <th className="pb-2 pr-4 font-medium">Status</th>
+              <th className="pb-2 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {c.locations.map((l) => {
+              const left = daysUntil(new Date(l.endDate));
+              const ended = stateOf(l) === "ENDED";
+              return (
+                <tr key={l.id} className="border-t">
+                  <td className="py-2 pr-4 font-medium">{l.location}</td>
+                  <td className="py-2 pr-4">{l.city}</td>
+                  <td className="py-2 pr-4">{l.type}</td>
+                  <td className="py-2 pr-4">{l.vendor.name}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {formatDate(l.startDate)}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {formatDate(l.endDate)}
+                  </td>
+                  <td
+                    className={cn(
+                      "py-2 pr-4",
+                      ended
+                        ? "text-muted-foreground"
+                        : left <= 7
+                          ? "text-amber-600"
+                          : "",
+                    )}
+                  >
+                    {left < 0 ? `${Math.abs(left)}d ago` : `${left}d`}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span
+                      className={cn(
+                        "inline-flex rounded-md px-1.5 py-0.5 text-xs",
+                        l.reminder.sent
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {l.reminder.sent
+                        ? `Sent ${formatDate(l.reminder.sentAt ?? l.reminder.date)}`
+                        : formatDate(l.reminder.date)}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <StatusBadge status={l.status} endDate={l.endDate} />
+                  </td>
+                  <td className="py-2 text-right">
+                    <RowActions>
+                      <DropdownMenuItem
+                        disabled={ended}
+                        onClick={() => sendReminder(c, l.id)}
+                      >
+                        Send reminder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openEdit(c)}>
+                        Edit campaign
+                      </DropdownMenuItem>
+                    </RowActions>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    ),
+    [openEdit, sendReminder],
   );
 
   return (
@@ -428,19 +503,23 @@ export function CampaignManager({
           <DataTable
             columns={columns}
             data={filteredCampaigns}
-            searchPlaceholder="Search client, sales, vendor, city…"
+            renderExpanded={renderLocations}
+            searchPlaceholder="Search client, sales, location, city, vendor…"
             empty={
               campaigns.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-16 text-center">
                   <p className="text-sm text-muted-foreground">
                     No campaigns yet.
-                    {missingRefs && " Add a client, sales person and vendor first."}
+                    {missingRefs && " Add a client and a sales person first."}
                   </p>
                   {missingRefs ? (
                     <div className="flex gap-2 text-sm">
-                      <Link href="/clients" className="underline">Clients</Link>
-                      <Link href="/sales" className="underline">Sales</Link>
-                      <Link href="/vendors" className="underline">Vendors</Link>
+                      <Link href="/clients" className="underline">
+                        Clients
+                      </Link>
+                      <Link href="/sales" className="underline">
+                        Sales
+                      </Link>
                     </div>
                   ) : (
                     <Button onClick={openAdd}>+ New campaign</Button>
@@ -468,99 +547,23 @@ export function CampaignManager({
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Edit campaign" : "New campaign"}</DialogTitle>
+            <DialogTitle>
+              {editingId ? "Edit campaign" : "New campaign"}
+            </DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={save} className="grid max-h-[70vh] gap-4 overflow-y-auto px-1">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Client">
-                <EntityCombobox
-                  kind="clients"
-                  label="Client"
-                  value={form.clientId}
-                  onChange={(v) => set("clientId", v)}
-                  options={options.clients}
-                />
-              </Field>
-              <Field label="Sales person">
-                <EntityCombobox
-                  kind="sales"
-                  label="Sales person"
-                  value={form.salesId}
-                  onChange={(v) => set("salesId", v)}
-                  options={options.sales}
-                />
-              </Field>
-              <Field label="Vendor">
-                <EntityCombobox
-                  kind="vendors"
-                  label="Vendor"
-                  value={form.vendorId}
-                  onChange={(v) => set("vendorId", v)}
-                  options={options.vendors}
-                />
-              </Field>
-              <Field label="Type">
-                <Input value={form.type} onChange={(e) => set("type", e.target.value)} placeholder="Billboard, Digital…" required />
-              </Field>
-              <Field label="City">
-                <Input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Mumbai" required />
-              </Field>
-              <Field label="Location">
-                <Input value={form.location} onChange={(e) => set("location", e.target.value)} placeholder="Andheri West" required />
-              </Field>
-              <Field label="Start date">
-                <Input type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} required />
-              </Field>
-              <Field label="End date">
-                <Input
-                  type="date"
-                  value={form.endDate}
-                  onChange={(e) => set("endDate", e.target.value)}
-                  required
-                />
-              </Field>
-              <Field label="Reminder date">
-                <Input
-                  type="date"
-                  value={effectiveReminder}
-                  onChange={(e) => {
-                    setReminderTouched(true);
-                    set("reminderDate", e.target.value);
-                  }}
-                />
-              </Field>
-              <Field label="Status">
-                <Select value={form.status} onValueChange={(v) => set("status", v ?? "LIVE")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue>
-                      {(status: string | null) =>
-                        status === "ENDED" ? "Ended" : "Live"
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="LIVE">Live</SelectItem>
-                    <SelectItem value="ENDED">Ended</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Reminder defaults to 7 days before the end date; the sales person is
-              emailed on that day.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving ? "Saving…" : editingId ? "Save changes" : "Create campaign"}
-              </Button>
-            </div>
-          </form>
+          <CampaignForm
+            key={editingId ?? "new"}
+            draft={draft}
+            setDraft={setDraft}
+            options={options}
+            editing={Boolean(editingId)}
+            saving={saving}
+            onSubmit={save}
+            onCancel={() => setOpen(false)}
+          />
         </DialogContent>
       </Dialog>
 
@@ -589,23 +592,15 @@ function Stat({
       onClick={onClick}
       className={cn(
         "rounded-xl bg-card px-3.5 py-3 text-left ring-1 ring-foreground/10 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "ring-1 ring-black/20 hover:bg-card",
+        active && "ring-1 ring-black/30 hover:bg-card",
       )}
     >
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`text-lg font-semibold ${accent === "amber" ? "text-amber-600" : ""}`}>
+      <p
+        className={`text-lg font-semibold ${accent === "amber" ? "text-amber-600" : ""}`}
+      >
         {value}
       </p>
     </button>
   );
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      {children}
-    </div>
-  );
-}
-

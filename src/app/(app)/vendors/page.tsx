@@ -8,10 +8,14 @@ export default async function VendorsPage() {
   await connectDB();
   const [rows, campaigns] = await Promise.all([
     Vendor.find({ userId: session.userId }).sort({ name: 1 }).lean(),
-    Campaign.find({ userId: session.userId }).select("vendorId").lean(),
+    Campaign.find({ userId: session.userId }).select("locations.vendorId").lean(),
   ]);
+  // Vendors sit on the locations now. A campaign counts once even if several of
+  // its locations share the vendor, so "in use by N campaign(s)" stays true.
   const count = (id: string) =>
-    campaigns.filter((c) => String(c.vendorId) === id).length;
+    campaigns.filter((c) =>
+      c.locations.some((l) => String(l.vendorId) === id),
+    ).length;
 
   const items = rows.map((r) => ({
     id: r._id.toString(),

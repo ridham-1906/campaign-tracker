@@ -1,9 +1,10 @@
+import { z } from "zod";
 import { connectDB } from "@/lib/db";
-import { Campaign, Reminder, User } from "@/models";
+import { Campaign, User } from "@/models";
 import { sendReminderEmail } from "@/lib/mailer";
 import { decryptSecret } from "@/lib/crypto";
-import { daysUntil } from "@/lib/campaign";
-import { authGuard, badRequest, notFound, ok } from "@/lib/api";
+import { daysUntil, lifecycleState } from "@/lib/campaign";
+import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
 import { isValidId } from "@/lib/services";
 
 export const runtime = "nodejs";
@@ -11,12 +12,35 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
-/** Immediately email the campaign's sales person about its expiry. */
-export async function POST(_req: Request, { params }: Params) {
+const bodySchema = z.object({ locationId: z.string().min(1).optional() });
+
+type LocationLike = {
+  _id: unknown;
+  city: string;
+  location: string;
+  type: string;
+  status: string;
+  endDate: Date;
+  reminderSent: boolean;
+  reminderSentAt?: Date | null;
+};
+
+/**
+ * Immediately email the campaign's sales person. With `locationId`, nudges about
+ * that one placement; without it, sends a single digest covering every location
+ * that hasn't ended yet.
+ */
+export async function POST(req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
   const { id } = await params;
   if (!isValidId(id)) return notFound("Campaign not found");
+
+  const body = await readJson(req);
+  if ("error" in body) return body.error;
+  const parsed = bodySchema.safeParse(body.data ?? {});
+  if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
+  const { locationId } = parsed.data;
 
   await connectDB();
   const campaign = await Campaign.findOne({
@@ -24,7 +48,6 @@ export async function POST(_req: Request, { params }: Params) {
     userId: auth.session.userId,
   })
     .populate("salesId", "name email")
-    .populate("vendorId", "name")
     .populate("clientId", "name");
   if (!campaign) return notFound("Campaign not found");
 
@@ -32,8 +55,22 @@ export async function POST(_req: Request, { params }: Params) {
   if (!user) return notFound("User not found");
 
   const sales = campaign.salesId as unknown as { name: string; email: string };
-  const vendor = campaign.vendorId as unknown as { name: string };
   const client = campaign.clientId as unknown as { name: string };
+  const all = campaign.locations as unknown as LocationLike[];
+
+  const targets = locationId
+    ? all.filter((l) => String(l._id) === locationId)
+    : all.filter(
+        (l) =>
+          lifecycleState({ status: l.status, endDate: new Date(l.endDate) }) ===
+          "LIVE",
+      );
+
+  if (targets.length === 0) {
+    return badRequest(
+      locationId ? "Location not found" : "No live locations to remind about",
+    );
+  }
 
   try {
     await sendReminderEmail({
@@ -43,13 +80,13 @@ export async function POST(_req: Request, { params }: Params) {
       to: sales.email,
       salesName: sales.name,
       clientName: client.name,
-      vendorName: vendor.name,
-      city: campaign.city,
-      type: campaign.type,
-      location: campaign.location,
-      endDate: new Date(campaign.endDate),
-      daysLeft: Math.max(0, daysUntil(new Date(campaign.endDate))),
-      appUrl: process.env.APP_URL ?? "http://localhost:3000",
+      locations: targets.map((l) => ({
+        location: l.location,
+        city: l.city,
+        type: l.type,
+        endDate: new Date(l.endDate),
+        daysLeft: Math.max(0, daysUntil(new Date(l.endDate))),
+      })),
     });
   } catch (err) {
     return badRequest(
@@ -57,10 +94,14 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
-  await Reminder.updateOne(
-    { campaignId: campaign._id },
-    { sent: true, sentAt: new Date() },
-  );
+  // Mark exactly the locations this email covered — the old code marked an
+  // arbitrary reminder, which would pick the wrong one now there are several.
+  const sentAt = new Date();
+  for (const l of targets) {
+    l.reminderSent = true;
+    l.reminderSentAt = sentAt;
+  }
+  await campaign.save();
 
-  return ok({ ok: true, sentTo: sales.email });
+  return ok({ ok: true, sentTo: sales.email, locations: targets.length });
 }

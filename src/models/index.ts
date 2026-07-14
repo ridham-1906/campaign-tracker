@@ -45,53 +45,63 @@ const clientSchema = new Schema(
   { timestamps: true },
 );
 
+// ---------------- Campaign location ----------------
+/**
+ * One placement within a campaign: a site, its vendor, its own dates, its own
+ * lifecycle and its own reminder. A campaign runs at several of these at once,
+ * and they can end (and be reminded about) independently.
+ *
+ * The reminder lives here rather than in its own collection so the cron query
+ * returns whole campaigns with their due locations already grouped — which is
+ * exactly what the one-email-per-campaign digest needs.
+ */
+const campaignLocationSchema = new Schema({
+  city: { type: String, required: true },
+  location: { type: String, required: true },
+  type: { type: String, required: true },
+  vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true },
+
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: true },
+  days: { type: Number, required: true },
+  status: { type: String, enum: ["LIVE", "ENDED"], default: "LIVE" },
+
+  reminderDate: { type: Date, required: true },
+  reminderSent: { type: Boolean, default: false },
+  reminderSentAt: { type: Date, default: null },
+});
+
 // ---------------- Campaign ----------------
 const campaignSchema = new Schema(
   {
-    city: { type: String, required: true },
-    type: { type: String, required: true },
-    location: { type: String, required: true },
-    days: { type: Number, required: true },
-    status: {
-      type: String,
-      enum: ["LIVE", "ENDED"],
-      default: "LIVE",
-    },
-    startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true, index: true },
-
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    salesId: { type: Schema.Types.ObjectId, ref: "Sales", required: true },
-    vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true },
     clientId: { type: Schema.Types.ObjectId, ref: "Client", required: true },
+    salesId: { type: Schema.Types.ObjectId, ref: "Sales", required: true },
+
+    locations: {
+      type: [campaignLocationSchema],
+      validate: {
+        validator: (v: unknown[]) => Array.isArray(v) && v.length > 0,
+        message: "A campaign needs at least one location",
+      },
+    },
   },
   { timestamps: true },
 );
 
-// ---------------- Reminder ----------------
-const reminderSchema = new Schema(
-  {
-    campaignId: {
-      type: Schema.Types.ObjectId,
-      ref: "Campaign",
-      required: true,
-      index: true,
-    },
-    date: { type: Date, required: true, index: true }, // day the reminder fires
-    sent: { type: Boolean, default: false },
-    sentAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
+// Backs the cron's $elemMatch scan for unsent, past-due reminders.
+campaignSchema.index({ "locations.reminderSent": 1, "locations.reminderDate": 1 });
+// Backs the "is this vendor still in use?" check before a vendor delete.
+campaignSchema.index({ userId: 1, "locations.vendorId": 1 });
 
 export type UserDoc = InferSchemaType<typeof userSchema> & { _id: Types.ObjectId };
 export type SalesDoc = InferSchemaType<typeof salesSchema> & { _id: Types.ObjectId };
 export type VendorDoc = InferSchemaType<typeof vendorSchema> & { _id: Types.ObjectId };
 export type ClientDoc = InferSchemaType<typeof clientSchema> & { _id: Types.ObjectId };
+export type CampaignLocationDoc = InferSchemaType<
+  typeof campaignLocationSchema
+> & { _id: Types.ObjectId };
 export type CampaignDoc = InferSchemaType<typeof campaignSchema> & {
-  _id: Types.ObjectId;
-};
-export type ReminderDoc = InferSchemaType<typeof reminderSchema> & {
   _id: Types.ObjectId;
 };
 
@@ -109,6 +119,3 @@ export const Client: Model<ClientDoc> =
 export const Campaign: Model<CampaignDoc> =
   (mongoose.models.Campaign as Model<CampaignDoc>) ??
   mongoose.model("Campaign", campaignSchema);
-export const Reminder: Model<ReminderDoc> =
-  (mongoose.models.Reminder as Model<ReminderDoc>) ??
-  mongoose.model("Reminder", reminderSchema);

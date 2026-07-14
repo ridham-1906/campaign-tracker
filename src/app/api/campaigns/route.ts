@@ -6,23 +6,29 @@ import { authGuard, badRequest, created, ok, readJson } from "@/lib/api";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const createSchema = z
+/** One placement. The date rule applies per location, not campaign-wide. */
+export const locationSchema = z
   .object({
-    clientId: z.string().min(1),
-    salesId: z.string().min(1),
-    vendorId: z.string().min(1),
+    id: z.string().min(1).optional(),
     city: z.string().min(1),
-    type: z.string().min(1),
     location: z.string().min(1),
+    type: z.string().min(1),
+    vendorId: z.string().min(1),
     startDate: z.coerce.date(),
     endDate: z.coerce.date(),
     status: z.enum(["LIVE", "ENDED"]).optional(),
     reminderDate: z.coerce.date().optional(),
   })
-  .refine((d) => d.endDate >= d.startDate, {
+  .refine((l) => l.endDate >= l.startDate, {
     message: "endDate must be on or after startDate",
     path: ["endDate"],
   });
+
+const createSchema = z.object({
+  clientId: z.string().min(1),
+  salesId: z.string().min(1),
+  locations: z.array(locationSchema).min(1, "Add at least one location"),
+});
 
 export async function GET() {
   const auth = await authGuard();
@@ -42,8 +48,8 @@ export async function POST(req: Request) {
 
   const refErr = await validateRefsOwned(auth.session.userId, {
     salesId: parsed.data.salesId,
-    vendorId: parsed.data.vendorId,
     clientId: parsed.data.clientId,
+    vendorIds: parsed.data.locations.map((l) => l.vendorId),
   });
   if (refErr) return badRequest(refErr);
 

@@ -1,7 +1,7 @@
 import "server-only";
 import { Types } from "mongoose";
 import { connectDB } from "@/lib/db";
-import { Campaign, Client, Reminder, Sales, Vendor } from "@/models";
+import { Campaign, Client, Sales, Vendor } from "@/models";
 import {
   type CampaignStatus,
   defaultReminderDate,
@@ -10,45 +10,77 @@ import {
 } from "@/lib/campaign";
 
 /**
- * Shared write logic for campaigns, used by both the web UI server actions and
- * the JSON API so the reminder-handling rules live in exactly one place.
+ * Shared write logic for campaigns, used by both the web UI and the JSON API so
+ * the location/reminder rules live in exactly one place.
  */
 
-export type CampaignInput = {
-  clientId: string;
-  salesId: string;
-  vendorId: string;
+/** One placement. `id` present = an existing subdoc; absent = a new one. */
+export type LocationInput = {
+  id?: string;
   city: string;
-  type: string;
   location: string;
+  type: string;
+  vendorId: string;
   startDate: Date;
   endDate: Date;
   status?: CampaignStatus;
   reminderDate?: Date;
 };
 
+export type CampaignInput = {
+  clientId: string;
+  salesId: string;
+  locations: LocationInput[];
+};
+
 export function isValidId(id: string) {
   return Types.ObjectId.isValid(id);
 }
 
-/** Verify each referenced person exists and belongs to the user. */
+/** Shape a location input into the fields the subdocument schema expects. */
+function buildLocation(input: LocationInput) {
+  const start = startOfDay(input.startDate);
+  const end = startOfDay(input.endDate);
+  return {
+    city: input.city,
+    location: input.location,
+    type: input.type,
+    vendorId: input.vendorId,
+    startDate: start,
+    endDate: end,
+    days: durationDays(start, end),
+    status: input.status ?? "LIVE",
+    reminderDate: input.reminderDate
+      ? startOfDay(input.reminderDate)
+      : defaultReminderDate(end),
+  };
+}
+
+/**
+ * Verify every referenced record exists and belongs to the user. Vendors now
+ * live on the locations, so all the distinct vendor ids are checked in one go.
+ */
 export async function validateRefsOwned(
   userId: string,
-  refs: { salesId: string; vendorId: string; clientId: string },
+  refs: { salesId: string; clientId: string; vendorIds: string[] },
 ): Promise<string | null> {
   if (!isValidId(refs.salesId)) return "Invalid salesId";
-  if (!isValidId(refs.vendorId)) return "Invalid vendorId";
   if (!isValidId(refs.clientId)) return "Invalid clientId";
 
+  const vendorIds = [...new Set(refs.vendorIds)];
+  if (vendorIds.some((id) => !isValidId(id))) return "Invalid vendorId";
+
   await connectDB();
-  const [sales, vendor, client] = await Promise.all([
+  const [sales, client, vendors] = await Promise.all([
     Sales.countDocuments({ _id: refs.salesId, userId }),
-    Vendor.countDocuments({ _id: refs.vendorId, userId }),
     Client.countDocuments({ _id: refs.clientId, userId }),
+    vendorIds.length
+      ? Vendor.countDocuments({ _id: { $in: vendorIds }, userId })
+      : 0,
   ]);
   if (!sales) return "salesId not found";
-  if (!vendor) return "vendorId not found";
   if (!client) return "clientId not found";
+  if (vendors !== vendorIds.length) return "vendorId not found";
   return null;
 }
 
@@ -57,31 +89,20 @@ export async function createCampaignForUser(
   input: CampaignInput,
 ) {
   await connectDB();
-  const start = startOfDay(input.startDate);
-  const end = startOfDay(input.endDate);
-
-  const campaign = await Campaign.create({
+  // Campaign + every location + every reminder is now a single document, so
+  // this is one atomic write rather than the old create-then-create pair.
+  return Campaign.create({
     userId,
     clientId: input.clientId,
     salesId: input.salesId,
-    vendorId: input.vendorId,
-    city: input.city,
-    type: input.type,
-    location: input.location,
-    days: durationDays(start, end),
-    status: input.status ?? "LIVE",
-    startDate: start,
-    endDate: end,
+    locations: input.locations.map(buildLocation),
   });
-
-  const reminderDate = input.reminderDate
-    ? startOfDay(input.reminderDate)
-    : defaultReminderDate(end);
-
-  await Reminder.create({ campaignId: campaign._id, date: reminderDate });
-  return campaign;
 }
 
+/**
+ * Reconcile the locations array against what's stored: update the ones the
+ * client sent back by id, insert the ones with no id, drop the ones it omitted.
+ */
 export async function updateCampaignForUser(
   userId: string,
   id: string,
@@ -95,59 +116,67 @@ export async function updateCampaignForUser(
 
   if (input.clientId !== undefined) campaign.clientId = input.clientId as never;
   if (input.salesId !== undefined) campaign.salesId = input.salesId as never;
-  if (input.vendorId !== undefined) campaign.vendorId = input.vendorId as never;
-  if (input.city !== undefined) campaign.city = input.city;
-  if (input.type !== undefined) campaign.type = input.type;
-  if (input.location !== undefined) campaign.location = input.location;
-  if (input.status !== undefined) campaign.status = input.status;
-  if (input.startDate !== undefined)
-    campaign.startDate = startOfDay(input.startDate);
-  if (input.endDate !== undefined) campaign.endDate = startOfDay(input.endDate);
-  campaign.days = durationDays(
-    new Date(campaign.startDate),
-    new Date(campaign.endDate),
-  );
-  await campaign.save();
 
-  // Update the reminder when a new reminder date (or a new end date) is given.
-  const newReminderDate = input.reminderDate
-    ? startOfDay(input.reminderDate)
-    : input.endDate !== undefined
-      ? defaultReminderDate(startOfDay(input.endDate))
-      : null;
+  if (input.locations !== undefined) {
+    const today = startOfDay(new Date());
+    const keptIds = new Set(
+      input.locations.map((l) => l.id).filter(Boolean) as string[],
+    );
 
-  if (newReminderDate) {
-    const existing = await Reminder.findOne({ campaignId: campaign._id });
-    if (existing) {
-      existing.date = newReminderDate;
-      if (newReminderDate >= startOfDay(new Date())) {
-        existing.sent = false;
-        existing.sentAt = null;
+    // Drop the locations the client no longer lists.
+    campaign.locations = campaign.locations.filter((existing) =>
+      keptIds.has(String(existing._id)),
+    ) as typeof campaign.locations;
+
+    for (const incoming of input.locations) {
+      const next = buildLocation(incoming);
+
+      if (!incoming.id) {
+        campaign.locations.push(next as never);
+        continue;
       }
-      await existing.save();
-    } else {
-      await Reminder.create({ campaignId: campaign._id, date: newReminderDate });
+
+      const existing = campaign.locations.find(
+        (l) => String(l._id) === incoming.id,
+      );
+      if (!existing) continue; // id we don't own — ignore rather than resurrect
+
+      // Carry the send state across; only re-arm when the reminder has been
+      // pushed back into the future, matching the old single-reminder rule.
+      const rearm = next.reminderDate >= today;
+      Object.assign(existing, next, {
+        reminderSent: rearm ? false : existing.reminderSent,
+        reminderSentAt: rearm ? null : existing.reminderSentAt,
+      });
     }
   }
 
+  await campaign.save();
   return campaign;
 }
 
 export async function deleteCampaignForUser(userId: string, id: string) {
   if (!isValidId(id)) return false;
   await connectDB();
+  // Locations (and their reminders) are embedded, so they go with the document.
   const campaign = await Campaign.findOneAndDelete({ _id: id, userId });
-  if (!campaign) return false;
-  await Reminder.deleteMany({ campaignId: campaign._id });
-  return true;
+  return Boolean(campaign);
 }
 
-/** Count campaigns referencing a person, to block deletes of in-use records. */
+/**
+ * Count campaigns referencing a person, to block deletes of in-use records.
+ * A vendor counts once per campaign even if several of its locations use it —
+ * so the "in use by N campaign(s)" message stays literally true.
+ */
 export async function countCampaignsUsing(
   userId: string,
   field: "salesId" | "vendorId" | "clientId",
   id: string,
 ) {
   await connectDB();
-  return Campaign.countDocuments({ userId, [field]: id });
+  const filter =
+    field === "vendorId"
+      ? { userId, "locations.vendorId": id }
+      : { userId, [field]: id };
+  return Campaign.countDocuments(filter);
 }

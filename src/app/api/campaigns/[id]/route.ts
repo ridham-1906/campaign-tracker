@@ -7,29 +7,27 @@ import {
   validateRefsOwned,
 } from "@/lib/services";
 import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
+import { locationSchema } from "../route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * `locations` is sent whole, not patched piecemeal: elements with an `id` are
+ * existing placements to update, elements without one are new, and anything the
+ * client omits is removed.
+ */
 const updateSchema = z
   .object({
     clientId: z.string().min(1).optional(),
     salesId: z.string().min(1).optional(),
-    vendorId: z.string().min(1).optional(),
-    city: z.string().min(1).optional(),
-    type: z.string().min(1).optional(),
-    location: z.string().min(1).optional(),
-    startDate: z.coerce.date().optional(),
-    endDate: z.coerce.date().optional(),
-    status: z.enum(["LIVE", "ENDED"]).optional(),
-    reminderDate: z.coerce.date().optional(),
+    locations: z
+      .array(locationSchema)
+      .min(1, "A campaign needs at least one location")
+      .optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "No fields to update",
-  })
-  .refine((d) => !(d.startDate && d.endDate) || d.endDate >= d.startDate, {
-    message: "endDate must be on or after startDate",
-    path: ["endDate"],
   });
 
 type Params = { params: Promise<{ id: string }> };
@@ -56,15 +54,17 @@ export async function PATCH(req: Request, { params }: Params) {
   const parsed = updateSchema.safeParse(body.data);
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
-  // Validate any referenced people that are being changed belong to the user.
+  // Validate any referenced records that are being changed belong to the user.
   const d = parsed.data;
-  if (d.salesId || d.vendorId || d.clientId) {
+  if (d.salesId || d.clientId || d.locations) {
     const current = await getCampaign(auth.session.userId, id);
     if (!current) return notFound("Campaign not found");
     const refErr = await validateRefsOwned(auth.session.userId, {
       salesId: d.salesId ?? current.sales.id,
-      vendorId: d.vendorId ?? current.vendor.id,
       clientId: d.clientId ?? current.client.id,
+      vendorIds: d.locations
+        ? d.locations.map((l) => l.vendorId)
+        : current.locations.map((l) => l.vendor.id),
     });
     if (refErr) return badRequest(refErr);
   }

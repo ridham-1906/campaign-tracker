@@ -3,10 +3,12 @@
 import * as React from "react";
 import {
   type ColumnDef,
+  type ExpandedState,
   type RowData,
   type SortingState,
   flexRender,
   getCoreRowModel,
+  getExpandedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
@@ -15,6 +17,7 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsLeftIcon,
@@ -57,6 +60,7 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "Search…",
   pageSize = 10,
   empty,
+  renderExpanded,
 }: {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -64,19 +68,31 @@ export function DataTable<TData, TValue>({
   pageSize?: number;
   /** Rendered instead of the table when there is no data at all. */
   empty?: React.ReactNode;
+  /**
+   * Renders a detail panel beneath a row, revealed by a chevron in a leading
+   * column. A panel rather than TanStack's `getSubRows` because the nested
+   * records (e.g. a campaign's locations) have their own column shape.
+   */
+  renderExpanded?: (row: TData) => React.ReactNode;
 }) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
+
+  const expandable = Boolean(renderExpanded);
 
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, expanded },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onExpandedChange: setExpanded,
+    getRowCanExpand: () => expandable,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageSize } },
   });
@@ -103,10 +119,11 @@ export function DataTable<TData, TValue>({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <Table>
+        <Table containerClassName="min-h-full">
         <TableHeader className="sticky top-0 z-10 bg-card">
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id}>
+              {expandable && <TableHead className="w-0 pl-4" />}
               {group.headers.map((header) => {
                 const canSort = header.column.getCanSort();
                 const sorted = header.column.getIsSorted();
@@ -160,25 +177,62 @@ export function DataTable<TData, TValue>({
           {rows.length === 0 ? (
             <TableRow className="hover:bg-transparent">
               <TableCell
-                colSpan={columns.length}
+                colSpan={columns.length + (expandable ? 1 : 0)}
                 className="h-24 text-center text-sm text-muted-foreground"
               >
                 No results.
               </TableCell>
             </TableRow>
           ) : (
-            rows.map((row) => (
-              <TableRow key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell
-                    key={cell.id}
-                    className={cn("px-4", cell.column.columnDef.meta?.className)}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
+            rows.map((row) => {
+              const isExpanded = row.getIsExpanded();
+              return (
+                <React.Fragment key={row.id}>
+                  <TableRow>
+                    {expandable && (
+                      <TableCell className="w-0 pl-4">
+                        <button
+                          type="button"
+                          onClick={row.getToggleExpandedHandler()}
+                          aria-expanded={isExpanded}
+                          aria-label={isExpanded ? "Collapse row" : "Expand row"}
+                          className="flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+                        >
+                          <ChevronDownIcon
+                            className={cn(
+                              "size-4 transition-transform",
+                              !isExpanded && "-rotate-90",
+                            )}
+                          />
+                        </button>
+                      </TableCell>
+                    )}
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        className={cn(
+                          "px-4",
+                          cell.column.columnDef.meta?.className,
+                        )}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+
+                  {isExpanded && renderExpanded && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell
+                        colSpan={row.getVisibleCells().length + 1}
+                        className="whitespace-normal bg-muted/30 p-0"
+                      >
+                        {renderExpanded(row.original)}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
+              );
+            })
           )}
         </TableBody>
         </Table>
