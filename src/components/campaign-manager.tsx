@@ -271,7 +271,7 @@ export function CampaignManager({
         cell: ({ row }) => {
           const n = row.original.locations.length;
           return (
-            <span className="text-muted-foreground">
+            <span>
               {n} location{n === 1 ? "" : "s"}
             </span>
           );
@@ -283,7 +283,7 @@ export function CampaignManager({
         header: "Runs",
         enableGlobalFilter: false,
         cell: ({ row }) => (
-          <span className="text-muted-foreground">
+          <span>
             {formatDate(new Date(earliestStart(row.original)))} –{" "}
             {formatDate(new Date(latestEnd(row.original)))}
           </span>
@@ -385,15 +385,18 @@ export function CampaignManager({
               const left = daysUntil(new Date(l.endDate));
               const ended = stateOf(l) === "ENDED";
               return (
-                <tr key={l.id} className="border-t">
-                  <td className="py-2 pr-4 font-medium">{l.location}</td>
+                <tr
+                  key={l.id}
+                  className={cn("border-t", ended && "text-muted-foreground")}
+                >
+                  <td className="py-2 pr-4">{l.location}</td>
                   <td className="py-2 pr-4">{l.city}</td>
                   <td className="py-2 pr-4">{l.type}</td>
                   <td className="py-2 pr-4">{l.vendor.name}</td>
                   <td className="py-2 pr-4 text-muted-foreground">
                     {formatDate(l.startDate)}
                   </td>
-                  <td className="py-2 pr-4 text-muted-foreground">
+                  <td className="py-2 pr-4">
                     {formatDate(l.endDate)}
                   </td>
                   <td
