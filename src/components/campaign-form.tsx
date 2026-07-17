@@ -238,7 +238,7 @@ export function CampaignForm({
         ))}
       </ol>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1">
+      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar px-1">
         {currentStep === "Details" && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Client">
@@ -311,7 +311,7 @@ export function CampaignForm({
                   <AlertCircleIcon className="size-4" />
                   Needs review
                 </div>
-                <ul className="max-h-44 space-y-1 overflow-y-auto text-xs">
+                <ul className="max-h-44 space-y-1 overflow-y-auto thin-scrollbar text-xs">
                   {importWarnings.slice(0, 12).map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}
@@ -440,12 +440,19 @@ export function CampaignForm({
                       <SelectTrigger className="w-full">
                         <SelectValue>
                           {(s: string | null) =>
-                            s === "ENDED" ? "Ended" : "Live"
+                            s === "ENDED"
+                              ? "Ended"
+                              : s === "PENDING_CREATIVE"
+                                ? "Pending creative"
+                                : "Live"
                           }
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="LIVE">Live</SelectItem>
+                        <SelectItem value="PENDING_CREATIVE">
+                          Pending creative
+                        </SelectItem>
                         <SelectItem value="ENDED">Ended</SelectItem>
                       </SelectContent>
                     </Select>

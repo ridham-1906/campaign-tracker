@@ -118,7 +118,7 @@ export function DataTable<TData, TValue>({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
         <Table containerClassName="min-h-full">
         <TableHeader className="sticky top-0 z-10 bg-card">
           {table.getHeaderGroups().map((group) => (

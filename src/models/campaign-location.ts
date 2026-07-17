@@ -1,5 +1,6 @@
 import "server-only";
 import { Schema, Types, InferSchemaType } from "mongoose";
+import { attachmentSchema } from "@/models/attachment";
 
 // ---------------- Campaign location ----------------
 /**
@@ -25,6 +26,8 @@ export const campaignLocationSchema = new Schema({
   reminderDate: { type: Date, required: true },
   reminderSent: { type: Boolean, default: false },
   reminderSentAt: { type: Date, default: null },
+
+  attachments: { type: [attachmentSchema], default: [] },
 });
 
 export type CampaignLocationDoc = InferSchemaType<

@@ -36,6 +36,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { AttachmentRow } from "@/components/location-attachments-editor";
 
 type Person = { id: string; name: string; email?: string };
 
@@ -50,6 +51,7 @@ export type LocationRow = {
   startDate: string;
   endDate: string;
   reminder: { date: string; sent: boolean; sentAt: string | null };
+  attachments: AttachmentRow[];
 };
 
 export type CampaignRow = {
@@ -315,12 +317,20 @@ export function CampaignManager({
         cell: ({ row }) => {
           const c = row.original;
           const live = c.locations.filter((l) => stateOf(l) === "LIVE").length;
-          const ended = c.locations.length - live;
+          const pending = c.locations.filter(
+            (l) => stateOf(l) === "PENDING_CREATIVE",
+          ).length;
+          const ended = c.locations.length - live - pending;
           return (
             <span className="flex items-center gap-1.5">
               {live > 0 && (
                 <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                   {live} live
+                </span>
+              )}
+              {pending > 0 && (
+                <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+                  {pending} pending creative
                 </span>
               )}
               {ended > 0 && (

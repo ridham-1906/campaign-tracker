@@ -1,6 +1,6 @@
 // Shared helpers for campaign dates / lifecycle. Pure functions, safe anywhere.
 
-export const CAMPAIGN_STATUSES = ["LIVE", "ENDED"] as const;
+export const CAMPAIGN_STATUSES = ["LIVE", "ENDED", "PENDING_CREATIVE"] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const DEFAULT_REMINDER_LEAD_DAYS = 7;
@@ -42,23 +42,27 @@ export function durationDays(start: Date, end: Date) {
   );
 }
 
-export type LifecycleState = "LIVE" | "ENDED";
+export type LifecycleState = "LIVE" | "ENDED" | "PENDING_CREATIVE";
 
 /**
- * A campaign is either LIVE or ENDED. It's ENDED when marked so manually, or
- * once its end date has passed; otherwise it's LIVE.
+ * A location is ENDED when marked so manually, or once its end date has
+ * passed. PENDING_CREATIVE is a manual-only state (the creative isn't ready
+ * yet) and doesn't flip to LIVE on its own; otherwise it's LIVE.
  */
 export function lifecycleState(
   campaign: { status: string; endDate: Date },
   now: Date = new Date(),
 ): LifecycleState {
   if (campaign.status === "ENDED") return "ENDED";
+  if (campaign.status === "PENDING_CREATIVE") return "PENDING_CREATIVE";
   if (daysUntil(campaign.endDate, now) < 0) return "ENDED";
   return "LIVE";
 }
 
 export function lifecycleLabel(state: LifecycleState) {
-  return state === "ENDED" ? "Ended" : "Live";
+  if (state === "ENDED") return "Ended";
+  if (state === "PENDING_CREATIVE") return "Pending creative";
+  return "Live";
 }
 
 /** True when a live campaign is within the reminder window of its end date. */

@@ -1,10 +1,23 @@
 import "server-only";
 import { connectDB } from "@/lib/db";
 import { Campaign, Client, Sales, Vendor } from "@/models";
+import type { AttachmentKind, AttachmentStage } from "@/lib/attachments";
 
 // Plain, client-safe shapes returned to React Server Components.
 
 export type PersonView = { id: string; name: string; email?: string };
+
+export type AttachmentView = {
+  id: string;
+  kind: AttachmentKind;
+  stage: AttachmentStage | null;
+  filename: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string; // ISO
+  /** Streams the file through our own auth-gated API — never a public Appwrite URL. */
+  url: string;
+};
 
 export type LocationView = {
   id: string;
@@ -17,6 +30,7 @@ export type LocationView = {
   startDate: string; // ISO
   endDate: string; // ISO
   reminder: { date: string; sent: boolean; sentAt: string | null };
+  attachments: AttachmentView[];
 };
 
 export type CampaignView = {
@@ -61,6 +75,16 @@ function personFrom(ref: LeanRef): PersonView {
   };
 }
 
+type LeanAttachment = {
+  _id: unknown;
+  kind: AttachmentKind;
+  stage?: AttachmentStage | null;
+  filename: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: Date;
+};
+
 type LeanLocation = {
   _id: unknown;
   city: string;
@@ -74,11 +98,30 @@ type LeanLocation = {
   reminderDate: Date;
   reminderSent: boolean;
   reminderSentAt?: Date | null;
+  attachments?: LeanAttachment[];
 };
 
-function locationFrom(l: LeanLocation): LocationView {
+function attachmentFrom(
+  a: LeanAttachment,
+  campaignId: string,
+  locationId: string,
+): AttachmentView {
   return {
-    id: String(l._id),
+    id: String(a._id),
+    kind: a.kind,
+    stage: a.stage ?? null,
+    filename: a.filename,
+    mimeType: a.mimeType,
+    size: a.size,
+    uploadedAt: new Date(a.uploadedAt).toISOString(),
+    url: `/api/campaigns/${campaignId}/locations/${locationId}/attachments/${String(a._id)}`,
+  };
+}
+
+function locationFrom(l: LeanLocation, campaignId: string): LocationView {
+  const locationId = String(l._id);
+  return {
+    id: locationId,
     city: l.city,
     location: l.location,
     type: l.type,
@@ -94,6 +137,9 @@ function locationFrom(l: LeanLocation): LocationView {
         ? new Date(l.reminderSentAt).toISOString()
         : null,
     },
+    attachments: (l.attachments ?? []).map((a) =>
+      attachmentFrom(a, campaignId, locationId),
+    ),
   };
 }
 
@@ -121,12 +167,17 @@ export async function getCampaigns(userId: string): Promise<CampaignView[]> {
       earliestEnd(b.locations as unknown as LeanLocation[]),
   );
 
-  return rows.map((r) => ({
-    id: r._id.toString(),
-    client: personFrom(r.clientId as LeanRef),
-    sales: personFrom(r.salesId as LeanRef),
-    locations: (r.locations as unknown as LeanLocation[]).map(locationFrom),
-  }));
+  return rows.map((r) => {
+    const campaignId = r._id.toString();
+    return {
+      id: campaignId,
+      client: personFrom(r.clientId as LeanRef),
+      sales: personFrom(r.salesId as LeanRef),
+      locations: (r.locations as unknown as LeanLocation[]).map((l) =>
+        locationFrom(l, campaignId),
+      ),
+    };
+  });
 }
 
 export async function getCampaign(
@@ -141,10 +192,13 @@ export async function getCampaign(
     .lean();
   if (!r) return null;
 
+  const campaignId = r._id.toString();
   return {
-    id: r._id.toString(),
+    id: campaignId,
     client: personFrom(r.clientId as LeanRef),
     sales: personFrom(r.salesId as LeanRef),
-    locations: (r.locations as unknown as LeanLocation[]).map(locationFrom),
+    locations: (r.locations as unknown as LeanLocation[]).map((l) =>
+      locationFrom(l, campaignId),
+    ),
   };
 }

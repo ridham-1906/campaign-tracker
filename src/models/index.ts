@@ -12,5 +12,6 @@ export * from "@/models/user";
 export * from "@/models/sales";
 export * from "@/models/vendor";
 export * from "@/models/client";
+export * from "@/models/attachment";
 export * from "@/models/campaign-location";
 export * from "@/models/campaign";

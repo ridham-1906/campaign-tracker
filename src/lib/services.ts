@@ -155,6 +155,26 @@ export async function updateCampaignForUser(
   return campaign;
 }
 
+/** Load a campaign and one of its locations, scoped to the owning user. */
+export async function findOwnedLocation(
+  userId: string,
+  campaignId: string,
+  locationId: string,
+) {
+  if (!isValidId(campaignId) || !isValidId(locationId)) return null;
+  await connectDB();
+
+  const campaign = await Campaign.findOne({ _id: campaignId, userId });
+  if (!campaign) return null;
+
+  const location = campaign.locations.find(
+    (l) => String(l._id) === locationId,
+  );
+  if (!location) return null;
+
+  return { campaign, location };
+}
+
 export async function deleteCampaignForUser(userId: string, id: string) {
   if (!isValidId(id)) return false;
   await connectDB();
