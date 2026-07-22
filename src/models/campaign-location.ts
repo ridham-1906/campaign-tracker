@@ -2,16 +2,6 @@ import "server-only";
 import { Schema, Types, InferSchemaType } from "mongoose";
 import { attachmentSchema } from "@/models/attachment";
 
-// ---------------- Campaign location ----------------
-/**
- * One placement within a campaign: a site, its vendor, its own dates, its own
- * lifecycle and its own reminder. A campaign runs at several of these at once,
- * and they can end (and be reminded about) independently.
- *
- * The reminder lives here rather than in its own collection so the cron query
- * returns whole campaigns with their due locations already grouped — which is
- * exactly what the one-email-per-campaign digest needs.
- */
 export const campaignLocationSchema = new Schema({
   city: { type: String, required: true },
   location: { type: String, required: true },
@@ -23,9 +13,13 @@ export const campaignLocationSchema = new Schema({
   days: { type: Number, required: true },
   status: { type: String, enum: ["LIVE", "ENDED", "PENDING_CREATIVE"], default: "LIVE" },
 
+  // Next expiry reminder due, rolled forward after each send.
   reminderDate: { type: Date, required: true },
+  // True once the whole 7/5/3/2/1 series is exhausted.
   reminderSent: { type: Boolean, default: false },
   reminderSentAt: { type: Date, default: null },
+  // Pending-creative nag is daily, so only the last send date is tracked.
+  creativeReminderSentAt: { type: Date, default: null },
 
   attachments: { type: [attachmentSchema], default: [] },
 });

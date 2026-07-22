@@ -170,8 +170,6 @@ function emptyImportLocation(): LocationDraft {
     vendorId: "",
     startDate: "",
     endDate: "",
-    reminderDate: "",
-    reminderTouched: false,
     status: "LIVE",
   };
 }

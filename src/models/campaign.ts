@@ -20,8 +20,10 @@ export const campaignSchema = new Schema(
   { timestamps: true },
 );
 
-// Backs the cron's $elemMatch scan for unsent, past-due reminders.
-campaignSchema.index({ "locations.reminderSent": 1, "locations.reminderDate": 1 });
+// Backs the cron's $elemMatch scan for past-due expiry reminders.
+campaignSchema.index({ "locations.reminderDate": 1, "locations.endDate": 1 });
+// Backs the same scan's pending-creative arm.
+campaignSchema.index({ "locations.status": 1, "locations.endDate": 1 });
 // Backs the "is this vendor still in use?" check before a vendor delete.
 campaignSchema.index({ userId: 1, "locations.vendorId": 1 });
 

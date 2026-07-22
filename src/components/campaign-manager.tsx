@@ -20,7 +20,6 @@ import { useConfirm } from "@/components/use-confirm";
 import {
   CampaignForm,
   emptyCampaign,
-  effectiveReminder,
   type CampaignDraft,
   type FormOptions,
   type LocationDraft,
@@ -71,11 +70,16 @@ function expiringSoon(l: LocationRow) {
 }
 
 function sentToday(l: LocationRow) {
-  if (!l.reminder.sent || !l.reminder.sentAt) return false;
+  if (!l.reminder.sentAt) return false;
   return (
     startOfDay(new Date(l.reminder.sentAt)).getTime() ===
     startOfDay(new Date()).getTime()
   );
+}
+
+/** Chased daily by the cron: pending creative and not past its end date. */
+function creativePending(l: LocationRow) {
+  return l.status === "PENDING_CREATIVE" && daysUntil(new Date(l.endDate)) >= 0;
 }
 
 // Campaign-level rollups over the locations.
@@ -84,6 +88,7 @@ const allEnded = (c: CampaignRow) =>
   c.locations.length > 0 && c.locations.every((l) => stateOf(l) === "ENDED");
 const anyExpiring = (c: CampaignRow) => c.locations.some(expiringSoon);
 const anySentToday = (c: CampaignRow) => c.locations.some(sentToday);
+const anyCreativePending = (c: CampaignRow) => c.locations.some(creativePending);
 
 /** Soonest end date across the campaign — what the list is ordered by. */
 function earliestEnd(c: CampaignRow) {
@@ -111,10 +116,6 @@ function toDraft(c: CampaignRow): CampaignDraft {
         vendorId: l.vendor.id,
         startDate: toDateInputValue(l.startDate),
         endDate: toDateInputValue(l.endDate),
-        reminderDate: toDateInputValue(l.reminder.date),
-        // Existing reminders keep their stored date rather than snapping back
-        // to end-minus-lead when the form opens.
-        reminderTouched: true,
         status: l.status,
       }),
     ),
@@ -135,7 +136,7 @@ export function CampaignManager({
   const [draft, setDraft] = useState<CampaignDraft>(emptyCampaign);
   const [saving, setSaving] = useState(false);
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "LIVE" | "EXPIRING" | "ENDED" | "SENT_TODAY"
+    "all" | "LIVE" | "EXPIRING" | "ENDED" | "SENT_TODAY" | "CREATIVE"
   >("all");
 
   const missingRefs =
@@ -149,6 +150,7 @@ export function CampaignManager({
       ended: campaigns.filter(allEnded).length,
       expiring: campaigns.filter(anyExpiring).length,
       sentToday: campaigns.filter(anySentToday).length,
+      creativePending: campaigns.filter(anyCreativePending).length,
     };
   }, [campaigns]);
 
@@ -162,6 +164,8 @@ export function CampaignManager({
         return campaigns.filter(anyExpiring);
       case "SENT_TODAY":
         return campaigns.filter(anySentToday);
+      case "CREATIVE":
+        return campaigns.filter(anyCreativePending);
       default:
         return campaigns;
     }
@@ -192,7 +196,6 @@ export function CampaignManager({
         vendorId: l.vendorId,
         startDate: l.startDate,
         endDate: l.endDate,
-        reminderDate: effectiveReminder(l) || undefined,
         status: l.status,
       })),
     });
@@ -385,7 +388,7 @@ export function CampaignManager({
               <th className="pb-2 pr-4 font-medium">Start</th>
               <th className="pb-2 pr-4 font-medium">End</th>
               <th className="pb-2 pr-4 font-medium">Days left</th>
-              <th className="pb-2 pr-4 font-medium">Reminder</th>
+              <th className="pb-2 pr-4 font-medium">Next reminder</th>
               <th className="pb-2 pr-4 font-medium">Status</th>
               <th className="pb-2 font-medium" />
             </tr>
@@ -431,7 +434,7 @@ export function CampaignManager({
                       )}
                     >
                       {l.reminder.sent
-                        ? `Sent ${formatDate(l.reminder.sentAt ?? l.reminder.date)}`
+                        ? "Done"
                         : formatDate(l.reminder.date)}
                     </span>
                   </td>
@@ -473,7 +476,7 @@ export function CampaignManager({
         <Button onClick={openAdd}>+ New campaign</Button>
       </div>
 
-      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat
           label="Total"
           value={stats.total}
@@ -500,6 +503,15 @@ export function CampaignManager({
           value={stats.ended}
           active={statusFilter === "ENDED"}
           onClick={() => setStatusFilter((f) => (f === "ENDED" ? "all" : "ENDED"))}
+        />
+        <Stat
+          label="Creative reminders today"
+          value={stats.creativePending}
+          accent="blue"
+          active={statusFilter === "CREATIVE"}
+          onClick={() =>
+            setStatusFilter((f) => (f === "CREATIVE" ? "all" : "CREATIVE"))
+          }
         />
         <Stat
           label="Reminders sent today"
@@ -546,7 +558,9 @@ export function CampaignManager({
                       ? "expiring soon"
                       : statusFilter === "SENT_TODAY"
                         ? "with a reminder sent today"
-                        : `that are ${statusFilter.toLowerCase()}`}
+                        : statusFilter === "CREATIVE"
+                          ? "with creative still pending"
+                          : `that are ${statusFilter.toLowerCase()}`}
                     .
                   </p>
                   <Button variant="outline" onClick={() => setStatusFilter("all")}>
@@ -594,10 +608,12 @@ function Stat({
 }: {
   label: string;
   value: number;
-  accent?: "amber";
+  accent?: "amber" | "blue";
   active?: boolean;
   onClick?: () => void;
 }) {
+  const accentClass =
+    accent === "amber" ? "text-amber-600" : accent === "blue" ? "text-blue-600" : "";
   return (
     <button
       type="button"
@@ -609,11 +625,7 @@ function Stat({
       )}
     >
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p
-        className={`text-lg font-semibold ${accent === "amber" ? "text-amber-600" : ""}`}
-      >
-        {value}
-      </p>
+      <p className={cn("text-lg font-semibold", accentClass)}>{value}</p>
     </button>
   );
 }

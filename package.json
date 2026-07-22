@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed": "tsx scripts/seed.ts",
-    "reminders": "tsx scripts/run-reminders.ts"
+    "reminders": "tsx --conditions=react-server --env-file=.env scripts/run-reminders.ts",
+    "clone-prod": "tsx --env-file=.env scripts/clone-prod-to-local.ts",
+    "migrate": "tsx --conditions=react-server --env-file=.env scripts/migrate-reminders.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

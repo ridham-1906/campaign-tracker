@@ -3,33 +3,66 @@
 export const CAMPAIGN_STATUSES = ["LIVE", "ENDED", "PENDING_CREATIVE"] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
-export const DEFAULT_REMINDER_LEAD_DAYS = 7;
+/** Days before a location's end date that the sales person is emailed. */
+export const EXPIRY_REMINDER_OFFSETS = [7, 5, 3, 2, 1] as const;
+export const DEFAULT_REMINDER_LEAD_DAYS = EXPIRY_REMINDER_OFFSETS[0];
 
-/** Midnight (local) of the given date. */
+/** Business timezone offset (IST). Dates are stored as UTC midnight, so this
+ * is only used to work out which calendar day it currently is. */
+const BUSINESS_UTC_OFFSET_MIN = 330;
+
+/**
+ * UTC midnight of the given date. Start/end/reminder dates are calendar dates,
+ * not instants — pinning them to UTC keeps them identical whether the code runs
+ * on a UTC server or an IST laptop.
+ */
 export function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/** Today's calendar date in the business timezone, as UTC midnight. */
+export function businessToday(now: Date = new Date()) {
+  return startOfDay(new Date(now.getTime() + BUSINESS_UTC_OFFSET_MIN * 60_000));
 }
 
 /** Whole days from today until `end` (negative if already past). */
 export function daysUntil(end: Date, now: Date = new Date()) {
-  const ms = startOfDay(end).getTime() - startOfDay(now).getTime();
+  const ms = startOfDay(end).getTime() - businessToday(now).getTime();
   return Math.round(ms / (1000 * 60 * 60 * 24));
 }
 
 export function addDays(d: Date, days: number) {
   const x = new Date(d);
-  x.setDate(x.getDate() + days);
+  x.setUTCDate(x.getUTCDate() + days);
   return x;
 }
 
-/** Default reminder date: `lead` days before the end date. */
-export function defaultReminderDate(
+/**
+ * The next reminder date on or after `from`, or null once the series is done.
+ * Reminders escalate as the end date approaches rather than firing once.
+ */
+export function nextReminderDate(
   endDate: Date,
-  lead = DEFAULT_REMINDER_LEAD_DAYS,
-) {
-  return startOfDay(addDays(endDate, -lead));
+  from: Date = new Date(),
+): Date | null {
+  const day = businessToday(from);
+  for (const offset of EXPIRY_REMINDER_OFFSETS) {
+    const d = startOfDay(addDays(endDate, -offset));
+    if (d >= day) return d;
+  }
+  return null;
+}
+
+/**
+ * The reminder fields to store for a location. With no milestones left the date
+ * is parked a day past the end so it can never come due again.
+ */
+export function reminderScheduleFor(endDate: Date, from: Date = new Date()) {
+  const next = nextReminderDate(endDate, from);
+  return {
+    reminderDate: next ?? addDays(startOfDay(endDate), 1),
+    reminderSent: next === null,
+  };
 }
 
 /** Inclusive campaign duration in whole days (minimum 1). */
@@ -79,15 +112,16 @@ export function isExpiringSoon(
 /** Format a Date as yyyy-mm-dd for <input type="date"> without TZ drift. */
 export function toDateInputValue(d: Date | string) {
   const date = typeof d === "string" ? new Date(d) : d;
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
 export function formatDate(d: Date | string) {
   const date = typeof d === "string" ? new Date(d) : d;
   return date.toLocaleDateString("en-US", {
+    timeZone: "UTC",
     year: "numeric",
     month: "short",
     day: "numeric",

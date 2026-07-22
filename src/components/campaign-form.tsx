@@ -5,12 +5,13 @@ import {
   AlertCircleIcon,
   FileSpreadsheetIcon,
   PlusIcon,
+  SlidersHorizontalIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
-  DEFAULT_REMINDER_LEAD_DAYS,
-  addDays,
-  toDateInputValue,
+  EXPIRY_REMINDER_OFFSETS,
+  formatDate,
+  nextReminderDate,
 } from "@/lib/campaign";
 import { parseCampaignExcel } from "@/lib/campaign-excel";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+/** Options for the location filter, and the labels the status select reuses. */
+const STATUS_LABELS: Record<string, string> = {
+  all: "All statuses",
+  LIVE: "Live",
+  PENDING_CREATIVE: "Pending creative",
+  ENDED: "Ended",
+};
 
 export type Option = { id: string; name: string };
 export type FormOptions = {
@@ -42,9 +63,6 @@ export type LocationDraft = {
   vendorId: string;
   startDate: string;
   endDate: string;
-  reminderDate: string;
-  /** Once the reminder is hand-edited it stops following the end date. */
-  reminderTouched: boolean;
   status: string;
 };
 
@@ -62,8 +80,6 @@ export function emptyLocation(): LocationDraft {
     vendorId: "",
     startDate: "",
     endDate: "",
-    reminderDate: "",
-    reminderTouched: false,
     status: "LIVE",
   };
 }
@@ -73,14 +89,13 @@ export function emptyCampaign(): CampaignDraft {
 }
 
 /**
- * The reminder shown for a location: until the user edits it, it tracks the end
- * date at the standard lead time, the same rule the server applies on save.
+ * When the next reminder will go out, derived from the end date exactly as the
+ * server does. Read-only — the schedule isn't editable.
  */
-export function effectiveReminder(l: LocationDraft) {
-  if (l.reminderTouched || !l.endDate) return l.reminderDate;
-  return toDateInputValue(
-    addDays(new Date(l.endDate), -DEFAULT_REMINDER_LEAD_DAYS),
-  );
+function reminderPreview(l: LocationDraft) {
+  if (!l.endDate) return "Set an end date";
+  const next = nextReminderDate(new Date(l.endDate));
+  return next ? formatDate(next) : "Ends too soon to remind";
 }
 
 const CREATE_STEPS = [
@@ -112,6 +127,10 @@ export function CampaignForm({
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [locQuery, setLocQuery] = useState("");
+  const [locStatus, setLocStatus] = useState("all");
+  const [startFrom, setStartFrom] = useState("");
+  const [endTo, setEndTo] = useState("");
   const steps = editing ? EDIT_STEPS : CREATE_STEPS;
   const currentStep = steps[step];
 
@@ -144,15 +163,7 @@ export function CampaignForm({
       locations: draft.locations.map((l, i) =>
         i === 0
           ? l
-          : {
-              ...l,
-              startDate: first.startDate,
-              endDate: first.endDate,
-              reminderDate: first.reminderTouched
-                ? first.reminderDate
-                : l.reminderDate,
-              reminderTouched: first.reminderTouched,
-            },
+          : { ...l, startDate: first.startDate, endDate: first.endDate },
       ),
     });
   }
@@ -197,6 +208,41 @@ export function CampaignForm({
   const datesOutOfOrder = draft.locations.some(
     (l) => l.startDate && l.endDate && l.endDate < l.startDate,
   );
+
+  const filtersActive = Boolean(
+    locQuery.trim() || locStatus !== "all" || startFrom || endTo,
+  );
+
+  function clearLocationFilters() {
+    setLocQuery("");
+    setLocStatus("all");
+    setStartFrom("");
+    setEndTo("");
+  }
+
+  /**
+   * Carries each location's original index so edits still target the right one
+   * once the list is narrowed. Dates are `yyyy-mm-dd`, so string compare works.
+   */
+  const visibleLocations = useMemo(() => {
+    const q = locQuery.trim().toLowerCase();
+    return draft.locations
+      .map((l, index) => ({ l, index }))
+      .filter(({ l }) => {
+        if (
+          q &&
+          ![l.location, l.city, l.type].some((v) => v.toLowerCase().includes(q))
+        ) {
+          return false;
+        }
+        if (locStatus !== "all" && l.status !== locStatus) return false;
+        // A location with no date yet is never filtered out, or it would be
+        // impossible to reach and fill in.
+        if (startFrom && l.startDate && l.startDate < startFrom) return false;
+        if (endTo && l.endDate && l.endDate > endTo) return false;
+        return true;
+      });
+  }, [draft.locations, locQuery, locStatus, startFrom, endTo]);
 
   const isLast = step === steps.length - 1;
 
@@ -389,7 +435,120 @@ export function CampaignForm({
 
         {currentStep === "Dates & reminders" && (
           <div className="space-y-3">
-            {draft.locations.map((l, i) => (
+            {draft.locations.length > 1 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={locQuery}
+                    onChange={(e) => setLocQuery(e.target.value)}
+                    placeholder="Search location, city or type…"
+                    className="flex-1"
+                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          aria-label="Filter locations"
+                          className="relative shrink-0"
+                        />
+                      }
+                    >
+                      <SlidersHorizontalIcon />
+                      {filtersActive && (
+                        <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
+                      )}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>Status</DropdownMenuSubTrigger>
+                        {/* Both submenus open left: there isn't room to the
+                            right of the trigger, so letting them auto-place
+                            puts them on opposite sides. */}
+                        <DropdownMenuSubContent side="left" className="w-48">
+                          <DropdownMenuRadioGroup
+                            value={locStatus}
+                            onValueChange={(v) => setLocStatus(String(v))}
+                          >
+                            {Object.entries(STATUS_LABELS).map(([v, label]) => (
+                              <DropdownMenuRadioItem key={v} value={v}>
+                                {label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>Date</DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent side="left" className="w-56">
+                          {/* Keystrokes must not reach the menu, or its typeahead
+                              hijacks the date fields. */}
+                          <div
+                            className="space-y-2 p-1.5"
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <Field label="Starts from">
+                              <Input
+                                type="date"
+                                value={startFrom}
+                                onChange={(e) => setStartFrom(e.target.value)}
+                              />
+                            </Field>
+                            <Field label="Ends to">
+                              <Input
+                                type="date"
+                                value={endTo}
+                                onChange={(e) => setEndTo(e.target.value)}
+                              />
+                            </Field>
+                            {(startFrom || endTo) && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  setStartFrom("");
+                                  setEndTo("");
+                                }}
+                              >
+                                Clear dates
+                              </Button>
+                            )}
+                          </div>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+
+                      {filtersActive && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={clearLocationFilters}>
+                            Clear all filters
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                {filtersActive && (
+                  <p className="text-xs text-muted-foreground">
+                    Showing {visibleLocations.length} of {draft.locations.length}{" "}
+                    locations
+                  </p>
+                )}
+              </div>
+            )}
+
+            {visibleLocations.length === 0 && (
+              <p className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
+                No locations match these filters.
+              </p>
+            )}
+
+            {visibleLocations.map(({ l, index: i }) => (
               <div key={i} className="rounded-lg border p-3">
                 <p className="mb-2 text-xs font-medium">
                   {l.location || `Location ${i + 1}`}
@@ -418,18 +577,6 @@ export function CampaignForm({
                       }
                     />
                   </Field>
-                  <Field label="Reminder">
-                    <Input
-                      type="date"
-                      value={effectiveReminder(l)}
-                      onChange={(e) =>
-                        setLocation(i, {
-                          reminderDate: e.target.value,
-                          reminderTouched: true,
-                        })
-                      }
-                    />
-                  </Field>
                   <Field label="Status">
                     <Select
                       value={l.status}
@@ -439,13 +586,7 @@ export function CampaignForm({
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue>
-                          {(s: string | null) =>
-                            s === "ENDED"
-                              ? "Ended"
-                              : s === "PENDING_CREATIVE"
-                                ? "Pending creative"
-                                : "Live"
-                          }
+                          {(s: string | null) => STATUS_LABELS[s ?? "LIVE"]}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
@@ -456,6 +597,11 @@ export function CampaignForm({
                         <SelectItem value="ENDED">Ended</SelectItem>
                       </SelectContent>
                     </Select>
+                  </Field>
+                  <Field label="Next reminder">
+                    <p className="flex h-9 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground">
+                      {reminderPreview(l)}
+                    </p>
                   </Field>
                 </div>
               </div>
@@ -468,9 +614,10 @@ export function CampaignForm({
             )}
 
             <p className="text-xs text-muted-foreground">
-              Reminder defaults to {DEFAULT_REMINDER_LEAD_DAYS} days before each
-              location&rsquo;s end date. A reminder dated in the past is sent on the
-              next run.
+              Reminders are sent automatically{" "}
+              {EXPIRY_REMINDER_OFFSETS.join(", ")} days before each location&rsquo;s
+              end date. Locations left as &ldquo;Pending creative&rdquo; are chased
+              daily until their status changes.
             </p>
 
             {datesOutOfOrder && (

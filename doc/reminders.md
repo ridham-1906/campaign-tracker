@@ -1,47 +1,114 @@
 # Reminders
 
-The core feature: sales people are emailed automatically before a campaign ends.
+The core feature: sales people are emailed automatically about campaigns that
+are ending, and chased daily about locations still waiting on their creative.
 
-## How it works
+Reminders live on each **campaign location**, not on the campaign — a campaign
+runs at several sites with their own start/end dates, and each is reminded about
+independently. One email covers all of a campaign's due locations.
 
-1. **When a campaign is created**, a `Reminder` is created with a `date`.
-   - Default = **7 days before the campaign's end date**.
-   - You can set any date on the campaign form (editable later too).
-2. **Once a day**, the reminder job runs (`/api/cron/reminders`). It:
-   - Finds every reminder whose `date` is **today** and `sent` is `false`.
-   - Loads the campaign, its sales person, vendor, client, and the owning
-     backend user (for the sender Gmail).
-   - Emails the **sales person** a "campaign expiring soon" message.
-   - Marks the reminder `sent = true`, `sentAt = now`.
-3. **Idempotent:** because reminders are flagged as sent, running the job more
-   than once in a day never double-sends. Send failures stay unsent and are
-   retried on the next run.
+## Expiry reminders
+
+Every location is reminded about **7, 5, 3, 2 and 1 days before its end date**.
+There is no editable reminder date; the schedule is derived from the end date.
+
+- `reminderDate` holds the **next** reminder due. After each send it rolls
+  forward to the next milestone. Once the series is exhausted it is parked one
+  day past the end date and `reminderSent` is set to `true`.
+- `reminderSentAt` is the dedupe key: a location is emailed at most once a day.
+- A milestone that is missed (job didn't run, send failed) is **caught up** on
+  the next run, using the real days-left at that moment rather than the
+  milestone that was missed.
+
+Locations marked **Pending creative** still receive expiry reminders — their end
+date is running down regardless of whether the creative arrived.
+
+## Creative reminders
+
+Any location whose status is `PENDING_CREATIVE` and whose end date hasn't passed
+is chased **every day** until the status changes, tracked by
+`creativeReminderSentAt`. This is a separate email from the expiry reminder; a
+campaign can receive both on the same day.
+
+## The job
+
+`/api/cron/reminders` (see [Admin API](./api.md)) does the whole pass:
+
+1. **Plan** — one MongoDB aggregation filters and projects server-side, so only
+   the locations that actually need an email come back, with only their mailable
+   fields. Sales person, client and owning user are joined in the same query.
+2. **Send** — jobs are grouped by owning user and sent from that user's own
+   Gmail over a single pooled connection, a bounded number of users at a time.
+3. **Record** — each campaign's sends are written back immediately with a
+   targeted `bulkWrite` touching only the affected location fields.
+
+**Idempotent:** sends are recorded per location, so running the job more than
+once a day never double-sends.
+
+**Time-budgeted:** the run stops starting new sends after ~25s (override with
+`REMINDER_TIME_BUDGET_MS`) so it returns a report rather than being killed
+mid-flight. Anything deferred is picked up by the next run.
 
 ### What gets skipped
 
-A due reminder is skipped (counted in `skipped`, not emailed) when:
+A due location is skipped (counted in `skipped`, not emailed) when its campaign
+is missing its sales person, client, or owning user — i.e. a relation was
+deleted.
 
-- The campaign was deleted.
-- The campaign status is **Completed**.
-- The campaign is missing a sales person or owner.
+### Failure reporting
 
-### Editing behavior
+Send failures are always collected per user group and logged with
+`console.error`. If `REMINDER_ERROR_REPORT_TO` is set, they are **also** emailed
+as a single digest — with timestamps, campaign ids and error messages — to that
+address, from the failing user's own mailbox. With the variable unset, failures
+are log-only.
 
-Moving a campaign's reminder date to a **future** day re-arms it (`sent` resets),
-so it can fire again. Past/completed reminders stay as-is.
+If the failure was opening the mailbox itself there is nowhere to send from, so
+that case only ever reaches the log.
+
+The route still returns HTTP 200 with the run counters, so an hourly schedule
+doesn't raise an alert for a single bad address.
+
+### Editing behaviour
+
+The reminder series is anchored to the end date. Editing a location leaves its
+place in the series alone unless the **end date** moves, in which case the
+schedule is recomputed from scratch.
 
 ### Manual send
 
-From a campaign's detail page, **Send reminder now** emails the sales person
-immediately and marks the reminder sent — useful for a one-off nudge.
+**Send reminder** on a campaign (or a single location) emails the sales person
+immediately and advances the schedule past today, so the automated series
+doesn't fire again for those locations the same day.
 
-## The email
+## Email templates
 
-- **From:** the backend user's own Gmail account (their `email` + `appPassword`).
-- **To:** the campaign's sales person email.
-- **Subject:** `Reminder: <Client> campaign in <City> expires in <N> days`
-- **Body:** client, vendor, type, city, location, end date, days left, and a
-  link back to the app (`APP_URL`).
+Templates live in [`src/lib/mail/`](../src/lib/mail), one file per type, sharing
+`shared.ts` for the card/layout markup:
+
+| File | Purpose |
+| --- | --- |
+| `expiry-reminder.ts` | Campaign expiring soon |
+| `creative-reminder.ts` | Creative still pending |
+| `error-update.ts` | Failure digest for the maintainer |
+
+`src/lib/mailer.ts` only builds transports and delivers a rendered message.
+
+## Dates and timezone
+
+Start, end and reminder dates are **calendar dates**, stored as UTC midnight.
+All date arithmetic uses UTC (`startOfDay`, `addDays`, `daysUntil` in
+[`src/lib/campaign.ts`](../src/lib/campaign.ts)), so results are identical on a
+UTC server and an IST laptop.
+
+The only place a timezone applies is `businessToday()`, which answers "what
+calendar day is it now" in IST (+5:30). The job uses it for its day boundaries,
+so an hourly schedule is correct at every hour — including between 00:00 and
+05:30 IST.
+
+> **Do not set `TZ` on the deployment.** These helpers are timezone-independent
+> by construction; setting `TZ` would make new writes land at `18:30Z` of the
+> previous day and mix two representations of the same calendar day.
 
 ## Gmail setup
 
@@ -60,47 +127,46 @@ plaintext.
 > Error `535-5.7.8 Username and Password not accepted` means the app password is
 > wrong, revoked, or a placeholder. Re-create the user with a valid one.
 
-## Scheduling the daily run
+Gmail caps sending at roughly **500 messages/day** (consumer) or **2000/day**
+(Workspace) per account. Since each backend user sends from their own mailbox,
+that limit — not the job — is the practical ceiling.
 
-The job is just an HTTP call — schedule it once a day with whatever you have.
+## Scheduling
 
-### Option A — Vercel Cron (if deployed on Vercel)
-
-[`vercel.json`](../vercel.json) already defines:
-
-```json
-{ "crons": [{ "path": "/api/cron/reminders", "schedule": "0 4 * * *" }] }
-```
-
-Runs daily at **04:00 UTC**. Set `CRON_SECRET` in the Vercel project env —
-Vercel Cron automatically sends it as `Authorization: Bearer <CRON_SECRET>`.
-Adjust the [cron expression](https://crontab.guru/) for your timezone.
-
-### Option B — External scheduler (cron-job.org, GitHub Actions, etc.)
-
-Hit the endpoint once a day with the secret header:
+The job is just an HTTP call. Run it **hourly**: the per-day dedupe makes
+re-runs safe, and it gives 24 automatic retries for anything deferred or failed.
 
 ```
 POST https://your-app.com/api/cron/reminders
 Authorization: Bearer <CRON_SECRET>
 ```
 
-### Option C — System cron (self-hosted)
+Schedulers that can't set headers may pass `?secret=<CRON_SECRET>` instead —
+prefer the header, since query strings show up in logs.
 
-```cron
-# every day at 09:00 server time
-0 9 * * * curl -s -X POST -H "Authorization: Bearer YOUR_CRON_SECRET" https://your-app.com/api/cron/reminders
-```
+- **cron-job.org / GitHub Actions / system cron** — schedule `0 * * * *`.
+- **Vercel Cron** — needs a `vercel.json` and only permits daily schedules on
+  the Hobby plan, so an external scheduler is preferred for hourly runs.
 
-### Option D — Local/manual
+### Running it by hand
+
+`scripts/run-reminders.ts` drives the same code without the dev server:
 
 ```bash
-npm run dev         # server running
-npm run reminders   # trigger once
+npm run reminders -- --dry               # list what's due, send nothing
+npm run reminders -- --dry 2026-07-20    # ...as if it were that day
+npm run reminders -- 2026-07-20          # actually send, as if it were then
+npm run reminders                        # actually send, now
 ```
 
-## Timezone note
+Passing a date is how you test a milestone without waiting for it. `--dry` runs
+only the planner query, so it never sends.
 
-"Today" is computed from the **server's local time** (start of day). Pick a cron
-time that sits comfortably inside the target day for your team's timezone (e.g.
-early morning) so reminders go out on the intended date.
+## Environment
+
+| Variable | Purpose |
+| --- | --- |
+| `CRON_SECRET` | Secret required to trigger the job |
+| `REMINDER_ERROR_REPORT_TO` | Where failure digests go. Unset = failures are logged only |
+| `REMINDER_USER_CONCURRENCY` | How many users send in parallel (default 4) |
+| `REMINDER_TIME_BUDGET_MS` | When to stop starting new sends (default 25000) |
