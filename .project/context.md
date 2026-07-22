@@ -54,8 +54,12 @@ of the previous day and mix two representations of the same calendar day.
 
 ## Reminders
 
-Two kinds, both driven by `runDueReminders` in `src/lib/reminders.ts` and
-triggered hourly via `GET|POST /api/cron/reminders` (bearer `CRON_SECRET`):
+Two kinds, both driven by `runDueReminders` in `src/lib/reminders.ts`, which
+takes a `kinds` option so each gets its own schedule. Both routes authenticate
+with `CRON_SECRET` via `cronGuard` in `src/lib/api.ts`:
+
+- `GET|POST /api/cron/reminders` — expiry only, run hourly (`0 11-19 * * *`)
+- `GET|POST /api/cron/creative-reminders` — creative only, daily (`0 11 * * *`)
 
 - **Expiry** — at 7, 5, 3, 2 and 1 days before a location's end date.
   `reminderDate` holds the *next* one and rolls forward after each send.
