@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { connectDB } from "@/lib/db";
 import { Campaign, User } from "@/models";
-import { sendReminderEmail } from "@/lib/mailer";
+import { sendMail } from "@/lib/mailer";
+import { buildExpiryReminder } from "@/lib/mail/expiry-reminder";
 import { decryptSecret } from "@/lib/crypto";
-import { daysUntil, lifecycleState } from "@/lib/campaign";
+import {
+  addDays,
+  daysUntil,
+  lifecycleState,
+  reminderScheduleFor,
+} from "@/lib/campaign";
 import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
 import { isValidId } from "@/lib/services";
 
@@ -21,6 +27,7 @@ type LocationLike = {
   type: string;
   status: string;
   endDate: Date;
+  reminderDate: Date;
   reminderSent: boolean;
   reminderSentAt?: Date | null;
 };
@@ -62,8 +69,8 @@ export async function POST(req: Request, { params }: Params) {
     ? all.filter((l) => String(l._id) === locationId)
     : all.filter(
         (l) =>
-          lifecycleState({ status: l.status, endDate: new Date(l.endDate) }) ===
-          "LIVE",
+          lifecycleState({ status: l.status, endDate: new Date(l.endDate) }) !==
+          "ENDED",
       );
 
   if (targets.length === 0) {
@@ -73,20 +80,23 @@ export async function POST(req: Request, { params }: Params) {
   }
 
   try {
-    await sendReminderEmail({
+    await sendMail({
       fromName: user.name,
       fromEmail: user.email,
       appPassword: decryptSecret(user.appPassword),
       to: sales.email,
-      salesName: sales.name,
-      clientName: client.name,
-      locations: targets.map((l) => ({
-        location: l.location,
-        city: l.city,
-        type: l.type,
-        endDate: new Date(l.endDate),
-        daysLeft: Math.max(0, daysUntil(new Date(l.endDate))),
-      })),
+      message: buildExpiryReminder({
+        fromName: user.name,
+        salesName: sales.name,
+        clientName: client.name,
+        locations: targets.map((l) => ({
+          location: l.location,
+          city: l.city,
+          type: l.type,
+          endDate: new Date(l.endDate),
+          daysLeft: Math.max(0, daysUntil(new Date(l.endDate))),
+        })),
+      }),
     });
   } catch (err) {
     return badRequest(
@@ -94,11 +104,12 @@ export async function POST(req: Request, { params }: Params) {
     );
   }
 
-  // Mark exactly the locations this email covered — the old code marked an
-  // arbitrary reminder, which would pick the wrong one now there are several.
+  // Advance exactly the locations this email covered, so the automated series
+  // doesn't fire again for them today.
   const sentAt = new Date();
+  const from = addDays(new Date(), 1);
   for (const l of targets) {
-    l.reminderSent = true;
+    Object.assign(l, reminderScheduleFor(new Date(l.endDate), from));
     l.reminderSentAt = sentAt;
   }
   await campaign.save();

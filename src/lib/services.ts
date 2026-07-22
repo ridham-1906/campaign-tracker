@@ -4,8 +4,8 @@ import { connectDB } from "@/lib/db";
 import { Campaign, Client, Sales, Vendor } from "@/models";
 import {
   type CampaignStatus,
-  defaultReminderDate,
   durationDays,
+  reminderScheduleFor,
   startOfDay,
 } from "@/lib/campaign";
 
@@ -24,7 +24,6 @@ export type LocationInput = {
   startDate: Date;
   endDate: Date;
   status?: CampaignStatus;
-  reminderDate?: Date;
 };
 
 export type CampaignInput = {
@@ -50,9 +49,7 @@ function buildLocation(input: LocationInput) {
     endDate: end,
     days: durationDays(start, end),
     status: input.status ?? "LIVE",
-    reminderDate: input.reminderDate
-      ? startOfDay(input.reminderDate)
-      : defaultReminderDate(end),
+    ...reminderScheduleFor(end),
   };
 }
 
@@ -118,7 +115,6 @@ export async function updateCampaignForUser(
   if (input.salesId !== undefined) campaign.salesId = input.salesId as never;
 
   if (input.locations !== undefined) {
-    const today = startOfDay(new Date());
     const keptIds = new Set(
       input.locations.map((l) => l.id).filter(Boolean) as string[],
     );
@@ -141,18 +137,45 @@ export async function updateCampaignForUser(
       );
       if (!existing) continue; // id we don't own — ignore rather than resurrect
 
-      // Carry the send state across; only re-arm when the reminder has been
-      // pushed back into the future, matching the old single-reminder rule.
-      const rearm = next.reminderDate >= today;
-      Object.assign(existing, next, {
-        reminderSent: rearm ? false : existing.reminderSent,
-        reminderSentAt: rearm ? null : existing.reminderSentAt,
-      });
+      // The reminder series is anchored to the end date, so it only restarts
+      // when that moves; otherwise the location keeps its place in the series.
+      const sameEnd =
+        startOfDay(existing.endDate).getTime() === next.endDate.getTime();
+      Object.assign(
+        existing,
+        next,
+        sameEnd
+          ? {
+              reminderDate: existing.reminderDate,
+              reminderSent: existing.reminderSent,
+            }
+          : { reminderSentAt: null },
+      );
     }
   }
 
   await campaign.save();
   return campaign;
+}
+
+/** Load a campaign and one of its locations, scoped to the owning user. */
+export async function findOwnedLocation(
+  userId: string,
+  campaignId: string,
+  locationId: string,
+) {
+  if (!isValidId(campaignId) || !isValidId(locationId)) return null;
+  await connectDB();
+
+  const campaign = await Campaign.findOne({ _id: campaignId, userId });
+  if (!campaign) return null;
+
+  const location = campaign.locations.find(
+    (l) => String(l._id) === locationId,
+  );
+  if (!location) return null;
+
+  return { campaign, location };
 }
 
 export async function deleteCampaignForUser(userId: string, id: string) {

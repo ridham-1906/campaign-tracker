@@ -16,8 +16,7 @@ export const locationSchema = z
     vendorId: z.string().min(1),
     startDate: z.coerce.date(),
     endDate: z.coerce.date(),
-    status: z.enum(["LIVE", "ENDED"]).optional(),
-    reminderDate: z.coerce.date().optional(),
+    status: z.enum(["LIVE", "ENDED", "PENDING_CREATIVE"]).optional(),
   })
   .refine((l) => l.endDate >= l.startDate, {
     message: "endDate must be on or after startDate",

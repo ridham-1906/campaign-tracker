@@ -23,7 +23,7 @@ export default async function AppLayout({
           <UserMenu name={session.name} email={session.email} />
         </header>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 md:p-6">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto thin-scrollbar thin-scrollbar p-4 md:p-6">
           {children}
         </main>
       </div>

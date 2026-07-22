@@ -155,9 +155,11 @@ function parseDate(value: RowValue) {
 
 function normalizeStatus(value: RowValue) {
   const status = normalize(value);
-  return status === "ended" || status === "end" || status === "completed"
-    ? "ENDED"
-    : "LIVE";
+  if (!status) return "PENDING_CREATIVE";
+  if (status === "ended" || status === "end" || status === "completed") {
+    return "ENDED";
+  }
+  return "LIVE";
 }
 
 function emptyImportLocation(): LocationDraft {
@@ -168,8 +170,6 @@ function emptyImportLocation(): LocationDraft {
     vendorId: "",
     startDate: "",
     endDate: "",
-    reminderDate: "",
-    reminderTouched: false,
     status: "LIVE",
   };
 }

@@ -111,7 +111,7 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ComboboxPrimitive.List
       data-slot="combobox-list"
-      className={cn("max-h-56 overflow-y-auto", className)}
+      className={cn("max-h-56 overflow-y-auto thin-scrollbar", className)}
       {...props}
     />
   )
