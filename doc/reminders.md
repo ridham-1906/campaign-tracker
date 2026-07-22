@@ -32,7 +32,15 @@ campaign can receive both on the same day.
 
 ## The job
 
-`/api/cron/reminders` (see [Admin API](./api.md)) does the whole pass:
+Two endpoints share one implementation, so they can sit on different schedules:
+
+| Route | Sends | Cadence |
+| --- | --- | --- |
+| `/api/cron/reminders` | Expiry only | Several times a day — repeats are retries |
+| `/api/cron/creative-reminders` | Pending creative only | Once a day |
+
+Both authenticate with `CRON_SECRET` through the same `cronGuard` helper in
+[`src/lib/api.ts`](../src/lib/api.ts). Each does the whole pass:
 
 1. **Plan** — one MongoDB aggregation filters and projects server-side, so only
    the locations that actually need an email come back, with only their mailable
@@ -133,20 +141,26 @@ that limit — not the job — is the practical ceiling.
 
 ## Scheduling
 
-The job is just an HTTP call. Run it **hourly**: the per-day dedupe makes
-re-runs safe, and it gives 24 automatic retries for anything deferred or failed.
+Both jobs are plain HTTP calls with the secret in the header. Schedulers that
+can't set headers may pass `?secret=<CRON_SECRET>` instead — prefer the header,
+since query strings show up in logs.
 
 ```
-POST https://your-app.com/api/cron/reminders
+POST https://your-app.com/api/cron/reminders             0 11-19 * * *
+POST https://your-app.com/api/cron/creative-reminders    0 11 * * *
 Authorization: Bearer <CRON_SECRET>
 ```
 
-Schedulers that can't set headers may pass `?secret=<CRON_SECRET>` instead —
-prefer the header, since query strings show up in logs.
+Set the scheduler's timezone to **Asia/Kolkata** so its clock matches
+`businessToday()`.
 
-- **cron-job.org / GitHub Actions / system cron** — schedule `0 * * * *`.
-- **Vercel Cron** — needs a `vercel.json` and only permits daily schedules on
-  the Hobby plan, so an external scheduler is preferred for hourly runs.
+Expiry runs on the hour through the working day: the first run that finds a
+milestone sends it, and the remaining runs are free retries for anything that
+failed or was deferred. Creative runs once, since it is a daily nudge and the
+per-day dedupe would ignore the extra calls anyway.
+
+**Vercel Cron** needs a `vercel.json` and only permits daily schedules on the
+Hobby plan, so an external scheduler is preferred for the hourly one.
 
 ### Running it by hand
 

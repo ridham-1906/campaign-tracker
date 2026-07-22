@@ -1,5 +1,5 @@
 import "server-only";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getSession, type SessionPayload } from "@/lib/auth";
 
 // ---- JSON response helpers ----
@@ -27,6 +27,27 @@ export async function authGuard(): Promise<
   const session = await getSession();
   if (!session) return { error: unauthorized() };
   return { session };
+}
+
+/**
+ * Guard for the cron routes, which authenticate with a shared secret rather
+ * than a session. Prefer the Authorization header; the query string is a
+ * fallback for schedulers that can't set headers, and shows up in logs.
+ */
+export function cronGuard(req: NextRequest): NextResponse | null {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json(
+      { error: "CRON_SECRET is not configured" },
+      { status: 500 },
+    );
+  }
+
+  const auth = req.headers.get("authorization");
+  const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+  const provided = bearer ?? req.nextUrl.searchParams.get("secret");
+
+  return provided === secret ? null : unauthorized();
 }
 
 /** Parse a JSON body, returning a 400 response on malformed input. */
