@@ -11,6 +11,10 @@ export const salesSchema = new Schema(
   { timestamps: true },
 );
 
+// The paginated list's default order. Without this the skip/limit sits behind
+// a blocking in-memory sort.
+salesSchema.index({ userId: 1, name: 1 });
+
 export type SalesDoc = InferSchemaType<typeof salesSchema> & { _id: Types.ObjectId };
 
 export const Sales: Model<SalesDoc> =

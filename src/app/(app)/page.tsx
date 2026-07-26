@@ -1,25 +1,11 @@
 import { requireSession } from "@/lib/auth";
-import {
-  getCampaigns,
-  getClientList,
-  getSalesList,
-  getVendorList,
-} from "@/lib/data";
 import { CampaignManager } from "@/components/campaign-manager";
 
 export default async function CampaignsPage() {
-  const session = await requireSession();
-  const [campaigns, clients, sales, vendors] = await Promise.all([
-    getCampaigns(session.userId),
-    getClientList(session.userId),
-    getSalesList(session.userId),
-    getVendorList(session.userId),
-  ]);
+  // Campaigns are fetched client-side through /api/campaigns so the table can
+  // page, search, sort and status-filter against the database; the page only
+  // gates access.
+  await requireSession();
 
-  return (
-    <CampaignManager
-      campaigns={campaigns}
-      options={{ clients, sales, vendors }}
-    />
-  );
+  return <CampaignManager />;
 }

@@ -16,6 +16,7 @@ import {
 import { parseCampaignExcel } from "@/lib/campaign-excel";
 import { cn } from "@/lib/utils";
 import { EntityCombobox } from "@/components/entity-combobox";
+import { useEntityOptions } from "@/lib/queries/entities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,13 +46,6 @@ const STATUS_LABELS: Record<string, string> = {
   LIVE: "Live",
   PENDING_CREATIVE: "Pending creative",
   ENDED: "Ended",
-};
-
-export type Option = { id: string; name: string };
-export type FormOptions = {
-  clients: Option[];
-  sales: Option[];
-  vendors: Option[];
 };
 
 /** A location as the form holds it. `id` is set only for existing locations. */
@@ -109,7 +103,6 @@ const EDIT_STEPS = ["Details", "Locations", "Dates & reminders"] as const;
 export function CampaignForm({
   draft,
   setDraft,
-  options,
   editing,
   saving,
   onSubmit,
@@ -117,12 +110,16 @@ export function CampaignForm({
 }: {
   draft: CampaignDraft;
   setDraft: (next: CampaignDraft) => void;
-  options: FormOptions;
   editing: boolean;
   saving: boolean;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  // Each EntityCombobox fetches its own options. The Excel importer is the one
+  // consumer that needs the vendor list imperatively (to resolve names to
+  // ids), so it reads the same cache entry the vendor combobox uses.
+  const { data: vendorOptions = [] } = useEntityOptions("vendors");
+
   const [step, setStep] = useState(0);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
@@ -175,7 +172,7 @@ export function CampaignForm({
     setImportWarnings([]);
 
     try {
-      const result = await parseCampaignExcel(file, options.vendors);
+      const result = await parseCampaignExcel(file, vendorOptions);
       if (result.locations.length > 0) {
         setDraft({ ...draft, locations: result.locations });
       }
@@ -293,7 +290,6 @@ export function CampaignForm({
                 label="Client"
                 value={draft.clientId}
                 onChange={(v) => setDraft({ ...draft, clientId: v })}
-                options={options.clients}
               />
             </Field>
             <Field label="Sales person">
@@ -302,7 +298,6 @@ export function CampaignForm({
                 label="Sales person"
                 value={draft.salesId}
                 onChange={(v) => setDraft({ ...draft, salesId: v })}
-                options={options.sales}
               />
             </Field>
             <p className="text-xs text-muted-foreground sm:col-span-2">
@@ -419,7 +414,6 @@ export function CampaignForm({
                       label="Vendor"
                       value={l.vendorId}
                       onChange={(v) => setLocation(i, { vendorId: v })}
-                      options={options.vendors}
                     />
                   </Field>
                 </div>

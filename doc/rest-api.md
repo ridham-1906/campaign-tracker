@@ -47,6 +47,33 @@ Any resource call without a valid session returns **`401 Unauthorized`**.
   the start of the day.
 - `PATCH` updates are partial — send only the fields you want to change.
 
+### List endpoints are paginated
+
+**Breaking change.** `GET /api/campaigns`, `/api/sales`, `/api/vendors` and
+`/api/clients` used to return a bare array of every record. They now return a
+page:
+
+```json
+{ "rows": [ ... ], "total": 137, "page": 1, "limit": 20 }
+```
+
+Shared query parameters:
+
+| Param | Default | Notes |
+| --- | --- | --- |
+| `page` | `1` | 1-based |
+| `limit` | `20` | capped at `100` |
+| `q` | — | case-insensitive substring search, max 100 chars |
+| `sort` | per endpoint | must be one of the endpoint's sort keys |
+| `dir` | `asc` | `asc` \| `desc` |
+
+Junk values fall back to the default rather than erroring — a stale bookmark
+should land on page 1, not a `400`.
+
+For the complete unpaginated list a combobox needs, use the `/options`
+endpoints (`/api/clients/options`, `/api/vendors/options`,
+`/api/sales/options`, `/api/campaigns/options`). Those return bare arrays.
+
 ---
 
 ## Sales people
@@ -55,11 +82,15 @@ Any resource call without a valid session returns **`401 Unauthorized`**.
 
 | Method | Path | Body | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/sales` | — | List |
+| `GET` | `/api/sales` | — | Page of `{id, name, email, count}`. Sort keys: `name` |
+| `GET` | `/api/sales/options` | — | All, as `{id, name, email}` |
 | `POST` | `/api/sales` | `{ name, email }` | Create → `201` |
 | `GET` | `/api/sales/:id` | — | One |
 | `PATCH` | `/api/sales/:id` | `{ name?, email? }` | Update |
 | `DELETE` | `/api/sales/:id` | — | `409` if used by a campaign |
+
+`count` is how many campaigns reference the record, computed for the rows on
+the current page only — which is why it isn't a sort key.
 
 ```bash
 curl -b cookies.txt -X POST http://localhost:3000/api/sales \
@@ -73,11 +104,15 @@ curl -b cookies.txt -X POST http://localhost:3000/api/sales \
 
 | Method | Path | Body |
 | --- | --- | --- |
-| `GET` | `/api/vendors` | — |
+| `GET` | `/api/vendors` | — (page of `{id, name, count}`; sort key `name`) |
+| `GET` | `/api/vendors/options` | — (all, as `{id, name}`) |
 | `POST` | `/api/vendors` | `{ name }` |
 | `GET` | `/api/vendors/:id` | — |
 | `PATCH` | `/api/vendors/:id` | `{ name }` |
 | `DELETE` | `/api/vendors/:id` | — (`409` if in use) |
+
+A vendor's `count` is campaigns, not locations: a campaign using the same
+vendor on several of its locations counts once.
 
 ## Clients
 
@@ -85,7 +120,8 @@ curl -b cookies.txt -X POST http://localhost:3000/api/sales \
 
 | Method | Path | Body |
 | --- | --- | --- |
-| `GET` | `/api/clients` | — |
+| `GET` | `/api/clients` | — (page of `{id, name, count}`; sort key `name`) |
+| `GET` | `/api/clients/options` | — (all, as `{id, name}`) |
 | `POST` | `/api/clients` | `{ name }` |
 | `GET` | `/api/clients/:id` | — |
 | `PATCH` | `/api/clients/:id` | `{ name }` |
@@ -100,12 +136,62 @@ Creating a campaign **auto-creates a reminder** 7 days before the end date
 
 | Method | Path | Body | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/campaigns` | — | List (with populated client/sales/vendor + reminder) |
+| `GET` | `/api/campaigns` | — | Page of campaigns. **Omits `locations[].attachments`** |
+| `GET` | `/api/campaigns/stats` | — | Status counts across the whole result set |
+| `GET` | `/api/campaigns/options` | — | All, as `{id, clientName, locationCount}` |
 | `POST` | `/api/campaigns` | see below | Create → `201` |
-| `GET` | `/api/campaigns/:id` | — | One |
+| `GET` | `/api/campaigns/:id` | — | One, **with** attachments |
 | `PATCH` | `/api/campaigns/:id` | any subset | Update |
-| `DELETE` | `/api/campaigns/:id` | — | Also deletes its reminder |
+| `DELETE` | `/api/campaigns/:id` | — | Also deletes its attachments and their stored files |
 | `POST` | `/api/campaigns/:id/send-reminder` | — | Email the sales person now |
+
+The list omits attachment metadata, which was roughly half its payload and is
+never rendered in a campaign table. Fetch a single campaign for the full tree.
+
+**Sort keys:** `endDate` (default — soonest-ending location), `dates`
+(earliest start), `client`.
+
+**`q`** matches the client name, the sales name, and any location's name,
+city, type or vendor name.
+
+**`status`** filters by a rollup over the campaign's locations:
+
+| Value | Meaning |
+| --- | --- |
+| `all` *(default)* | no filter |
+| `LIVE` | any location live |
+| `EXPIRING` | any location live and ending within 7 days |
+| `ENDED` | every location ended |
+| `SENT_TODAY` | a reminder went out today |
+| `CREATIVE` | any location pending creative and not past its end date |
+
+`GET /api/campaigns/stats` returns
+`{ total, live, expiring, ended, sentToday, creativePending }`. It accepts `q`
+(so the counts reflect a search) but not `status` — the counts *are* the
+status breakdown. Totals can't be derived from a single page, hence the
+separate endpoint.
+
+"Today" is the current calendar day in IST, matching the reminder cron's own
+day boundary.
+
+## Images
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/images` | Page of campaign summaries — one row per campaign that has files |
+
+Sort keys: `uploadedAt` (default, descending), `client`, `locations`, `count`.
+`q` matches client name, city and location name.
+
+Each row is `{id, clientName, locationCount, fileCount, latestUploadedAt}`,
+where `id` is the campaign id. Headline counts only — which locations and which
+file types is the preview dialog's business, not the table's. Cities and
+location names are matched by `q` but never returned.
+
+The files themselves aren't listed here. The preview dialog reads
+`GET /api/campaigns/:id`, which already carries every location's attachments,
+and streams each file from
+`/api/campaigns/:id/locations/:locationId/attachments/:attachmentId`.
 
 ### Create body
 
@@ -168,27 +254,11 @@ curl -b cookies.txt -X POST http://localhost:3000/api/campaigns/<id>/send-remind
 
 ## Reminders
 
-Usually managed through the campaign (one per campaign by default), but exposed
-directly for full control. Reminders are always tied to a campaign you own.
-
-| Method | Path | Body | Notes |
-| --- | --- | --- | --- |
-| `GET` | `/api/reminders` | — | All your reminders. Filter: `?campaignId=<id>` |
-| `POST` | `/api/reminders` | `{ campaignId, date, sent? }` | Create → `201` |
-| `GET` | `/api/reminders/:id` | — | One |
-| `PATCH` | `/api/reminders/:id` | `{ date?, sent? }` | Setting `sent:true` stamps `sentAt` |
-| `DELETE` | `/api/reminders/:id` | — | Delete |
-
-```bash
-# Schedule an extra reminder for a campaign
-curl -b cookies.txt -X POST http://localhost:3000/api/reminders \
-  -H "Content-Type: application/json" \
-  -d '{"campaignId":"<id>","date":"2026-08-05"}'
-
-# Mark a reminder as already sent (won't be emailed by the cron)
-curl -b cookies.txt -X PATCH http://localhost:3000/api/reminders/<id> \
-  -H "Content-Type: application/json" -d '{"sent":true}'
-```
+There is **no `/api/reminders` endpoint.** The standalone `Reminder` model was
+folded into the embedded locations: each location carries its own
+`reminderDate`, `reminderSent`, `reminderSentAt` and `creativeReminderSentAt`,
+which the campaign endpoints return and the cron updates. Schedules are derived
+from the end date, so change the date to move the reminder.
 
 > The daily job ([`/api/cron/reminders`](./api.md#post-apicronreminders))
 > processes **every** due reminder, so extra reminders you create here will fire

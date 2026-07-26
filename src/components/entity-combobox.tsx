@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { PlusIcon } from "lucide-react";
+import { useEntityOptions } from "@/lib/queries/entities";
 import { NamedResourceForm, SalesForm } from "@/components/entity-forms";
 import {
   Combobox,
@@ -41,55 +41,48 @@ export function EntityCombobox({
   label,
   value,
   onChange,
-  options,
 }: {
   kind: EntityKind;
   label: string;
   value: string;
   onChange: (id: string) => void;
-  options: ComboOption[];
 }) {
-  const router = useRouter();
   const meta = KIND_META[kind];
 
-  const [extras, setExtras] = useState<ComboOption[]>([]);
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingName, setPendingName] = useState("");
 
-  const allOptions = useMemo(() => {
-    const merged = [...options];
-    for (const extra of extras) {
-      if (!merged.some((o) => o.id === extra.id)) merged.push(extra);
-    }
-    return merged;
-  }, [options, extras]);
+  // Fetched here rather than drilled down from the page, so every consumer of
+  // this combobox shares one cache entry per resource.
+  const { data: options = [] } = useEntityOptions(kind);
 
-  const selected = allOptions.find((o) => o.id === value) ?? null;
+  const selected = options.find((o) => o.id === value) ?? null;
 
   const trimmed = query.trim();
   const lowered = trimmed.toLocaleLowerCase();
-  const exactMatch = allOptions.some(
+  const exactMatch = options.some(
     (o) => o.name.trim().toLocaleLowerCase() === lowered,
   );
   const items: ViewItem[] =
     trimmed !== "" && !exactMatch
       ? [
-          ...allOptions,
+          ...options,
           {
             id: `__create__:${lowered}`,
             name: `Create "${trimmed}"`,
             creatable: trimmed,
           },
         ]
-      : allOptions;
+      : options;
 
   function handleCreated(created: ComboOption) {
-    setExtras((prev) => [...prev, created]);
+    // useSaveNamed/useSaveSales already wrote the new record into the options
+    // cache, so it's selectable immediately — no local `extras` list needed to
+    // bridge the gap until the server list catches up.
     onChange(created.id);
     setQuery("");
     setCreateOpen(false);
-    router.refresh();
   }
 
   return (

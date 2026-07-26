@@ -1,114 +1,75 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ImageIcon, PlusIcon } from "lucide-react";
 import { formatDate } from "@/lib/campaign";
-import { STAGE_LABELS } from "@/lib/attachments";
+import { useImagesQuery } from "@/lib/queries/attachments";
 import { AddImagesWizard } from "@/components/add-images-wizard";
+import { ImagePreviewDialog } from "@/components/image-preview/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
-import type { CampaignRow } from "@/components/campaign-manager";
+import {
+  DataTable,
+  sortParams,
+  useTableState,
+} from "@/components/ui/data-table";
+import type { CampaignImagesRowView } from "@/lib/view-types";
 
-/** One row per (location, type) that has at least one file — a summary, not
- * a per-file listing. Individual files are viewed/deleted via the wizard's
- * location editor. */
-type AttachmentGroup = {
-  key: string;
-  clientName: string;
-  locationLabel: string;
-  city: string;
-  typeLabel: string;
-  count: number;
-  latestUploadedAt: string;
-};
-
-function groupAttachments(campaigns: CampaignRow[]): AttachmentGroup[] {
-  const groups = new Map<string, AttachmentGroup>();
-
-  for (const c of campaigns) {
-    for (const l of c.locations) {
-      for (const a of l.attachments) {
-        const typeLabel = a.kind === "image" && a.stage ? STAGE_LABELS[a.stage] : "Creative deck";
-        const key = `${l.id}:${typeLabel}`;
-        const existing = groups.get(key);
-        if (existing) {
-          existing.count += 1;
-          if (new Date(a.uploadedAt) > new Date(existing.latestUploadedAt)) {
-            existing.latestUploadedAt = a.uploadedAt;
-          }
-        } else {
-          groups.set(key, {
-            key,
-            clientName: c.client.name,
-            locationLabel: l.location,
-            city: l.city,
-            typeLabel,
-            count: 1,
-            latestUploadedAt: a.uploadedAt,
-          });
-        }
-      }
-    }
-  }
-
-  return [...groups.values()];
-}
-
-export function ImagesManager({ campaigns }: { campaigns: CampaignRow[] }) {
-  const router = useRouter();
+export function ImagesManager() {
   const [wizardOpen, setWizardOpen] = useState(false);
   // Bumped every time the wizard opens so it remounts with fresh step/
   // selection state instead of resuming wherever it was left last time.
   const [wizardKey, setWizardKey] = useState(0);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [preview, setPreview] = useState<CampaignImagesRowView | null>(null);
+
+  const table = useTableState();
+  const query = useImagesQuery({
+    page: table.pagination.pageIndex + 1,
+    limit: table.pagination.pageSize,
+    q: table.debouncedSearch || undefined,
+    ...sortParams(table.sorting),
+  });
 
   function openWizard() {
     setWizardKey((k) => k + 1);
     setWizardOpen(true);
   }
 
-  const groups = useMemo(() => groupAttachments(campaigns), [campaigns]);
+  function openPreview(row: CampaignImagesRowView) {
+    setPreview(row);
+    setPreviewOpen(true);
+  }
 
-  const columns = useMemo<ColumnDef<AttachmentGroup>[]>(
+  const columns = useMemo<ColumnDef<CampaignImagesRowView>[]>(
     () => [
       {
         id: "client",
-        accessorFn: (g) => `${g.clientName} ${g.locationLabel} ${g.city}`,
         header: "Client",
         cell: ({ row }) => (
           <span className="font-medium">{row.original.clientName}</span>
         ),
       },
       {
-        id: "location",
-        accessorFn: (g) => `${g.locationLabel} · ${g.city}`,
-        header: "Location",
-        enableGlobalFilter: false,
+        id: "locations",
+        header: "Locations",
+        cell: ({ row }) => <span>{row.original.locationCount}</span>,
       },
       {
-        id: "type",
-        accessorFn: (g) => g.typeLabel,
-        header: "Type",
-        enableGlobalFilter: false,
+        id: "count",
+        header: "Files",
+        cell: ({ row }) => <span>{row.original.fileCount}</span>,
       },
       {
         id: "uploadedAt",
-        accessorFn: (g) => new Date(g.latestUploadedAt).getTime(),
         header: "Uploaded",
-        enableGlobalFilter: false,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
             {formatDate(row.original.latestUploadedAt)}
           </span>
         ),
-      },
-      {
-        id: "count",
-        accessorFn: (g) => g.count,
-        header: "Files",
-        enableGlobalFilter: false,
       },
     ],
     [],
@@ -133,7 +94,17 @@ export function ImagesManager({ campaigns }: { campaigns: CampaignRow[] }) {
         <CardContent className="flex min-h-0 flex-1 flex-col p-0">
           <DataTable
             columns={columns}
-            data={groups}
+            data={query.data?.rows ?? []}
+            rowCount={query.data?.total ?? 0}
+            pagination={table.pagination}
+            onPaginationChange={table.setPagination}
+            sorting={table.sorting}
+            onSortingChange={table.setSorting}
+            search={table.search}
+            onSearchChange={table.setSearch}
+            isLoading={query.isLoading}
+            isFetching={query.isFetching}
+            onRowClick={openPreview}
             searchPlaceholder="Search client, location, city…"
             empty={
               <div className="flex flex-col items-center gap-3 py-16 text-center">
@@ -151,12 +122,18 @@ export function ImagesManager({ campaigns }: { campaigns: CampaignRow[] }) {
         </CardContent>
       </Card>
 
+      {/* Uploads and deletes invalidate the images query from inside their
+          mutations, so there's no onChanged callback to thread through. */}
       <AddImagesWizard
         key={wizardKey}
         open={wizardOpen}
         onOpenChange={setWizardOpen}
-        campaigns={campaigns}
-        onChanged={() => router.refresh()}
+      />
+
+      <ImagePreviewDialog
+        row={preview}
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
       />
     </div>
   );

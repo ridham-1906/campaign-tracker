@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { cn } from "@/lib/utils";
+import {
+  useCampaignOptionsQuery,
+  useCampaignQuery,
+} from "@/lib/queries/campaigns";
 import { SimpleCombobox } from "@/components/simple-combobox";
-import { LocationAttachmentsEditor } from "@/components/location-attachments-editor";
+import { StepNav } from "@/components/step-nav";
+import {
+  LocationAttachmentsEditor,
+  useLocationUpload,
+} from "@/components/location-attachments-editor";
 import { Button } from "@/components/ui/button";
+import { Loader2Icon, UploadCloudIcon } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -12,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { CampaignRow } from "@/components/campaign-manager";
 
 const STEPS = ["Campaign", "Location"] as const;
 
@@ -28,29 +35,40 @@ const STEPS = ["Campaign", "Location"] as const;
 export function AddImagesWizard({
   open,
   onOpenChange,
-  campaigns,
-  onChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  campaigns: CampaignRow[];
-  onChanged: () => void;
 }) {
   const [step, setStep] = useState(0);
   const [campaignId, setCampaignId] = useState("");
   const [locationId, setLocationId] = useState("");
 
-  const campaign = campaigns.find((c) => c.id === campaignId);
-  const location = campaign?.locations.find((l) => l.id === locationId);
+  // A light {id, clientName, locationCount} list for the picker, then the one
+  // selected campaign in full. The wizard used to be handed every campaign
+  // with all its locations and attachments up front.
+  const { data: options = [] } = useCampaignOptionsQuery(open);
+  const { data: campaign, isLoading: loadingCampaign } = useCampaignQuery(
+    campaignId || null,
+  );
+
   const currentStep = STEPS[step];
   const isLast = step === STEPS.length - 1;
-  const stepValid = currentStep === "Campaign" ? Boolean(campaignId) : Boolean(locationId);
 
-  function selectCampaign(id: string) {
-    setCampaignId(id);
-    const first = campaigns.find((c) => c.id === id)?.locations[0];
-    setLocationId(first?.id ?? "");
-  }
+  // Locations arrive with the detail fetch rather than with the picker, so the
+  // default selection is derived instead of set in the change handler.
+  const effectiveLocationId =
+    campaign?.locations.some((l) => l.id === locationId)
+      ? locationId
+      : (campaign?.locations[0]?.id ?? "");
+  const location = campaign?.locations.find((l) => l.id === effectiveLocationId);
+
+  // Owned here rather than inside the editor so Upload can sit in the footer
+  // as the dialog's primary action. Keyed remount per location resets it.
+  const upload = useLocationUpload({
+    campaignId,
+    locationId: effectiveLocationId,
+    onUploaded: () => onOpenChange(false),
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -59,40 +77,7 @@ export function AddImagesWizard({
           <DialogTitle>Add images</DialogTitle>
         </DialogHeader>
 
-        <ol className="flex shrink-0 items-center gap-2 text-xs">
-          {STEPS.map((label, i) => (
-            <li key={label} className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => i < step && setStep(i)}
-                disabled={i > step}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors",
-                  i === step
-                    ? "bg-primary text-primary-foreground"
-                    : i < step
-                      ? "text-foreground hover:bg-muted"
-                      : "text-muted-foreground",
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex size-4 items-center justify-center rounded-full text-[10px] font-medium",
-                    i === step
-                      ? "bg-primary-foreground text-primary"
-                      : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {i + 1}
-                </span>
-                {label}
-              </button>
-              {i < STEPS.length - 1 && (
-                <span className="text-muted-foreground/40">›</span>
-              )}
-            </li>
-          ))}
-        </ol>
+        <StepNav steps={STEPS} current={step} onStep={setStep} />
 
         <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar px-1">
           {currentStep === "Campaign" && (
@@ -101,67 +86,86 @@ export function AddImagesWizard({
               <SimpleCombobox
                 label="campaigns"
                 value={campaignId}
-                onChange={selectCampaign}
-                options={campaigns.map((c) => ({
+                onChange={(id) => {
+                  setCampaignId(id);
+                  setLocationId("");
+                }}
+                options={options.map((c) => ({
                   id: c.id,
-                  name: `${c.client.name} — ${c.locations.length} location${
-                    c.locations.length === 1 ? "" : "s"
+                  name: `${c.clientName} — ${c.locationCount} location${
+                    c.locationCount === 1 ? "" : "s"
                   }`,
                 }))}
               />
             </div>
           )}
 
-          {currentStep === "Location" && campaign && (
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Location</Label>
-                <SimpleCombobox
-                  label="locations"
-                  value={locationId}
-                  onChange={setLocationId}
-                  options={campaign.locations.map((l) => ({
-                    id: l.id,
-                    name: `${l.location} · ${l.city}`,
-                  }))}
-                />
-              </div>
+          {currentStep === "Location" &&
+            (loadingCampaign && !campaign ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading locations…
+              </p>
+            ) : (
+              campaign && (
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Location</Label>
+                    <SimpleCombobox
+                      label="locations"
+                      value={effectiveLocationId}
+                      onChange={setLocationId}
+                      options={campaign.locations.map((l) => ({
+                        id: l.id,
+                        name: `${l.location} · ${l.city}`,
+                      }))}
+                    />
+                  </div>
 
-              {location && (
-                <LocationAttachmentsEditor
-                  key={location.id}
-                  campaignId={campaign.id}
-                  locationId={location.id}
-                  locationLabel={`${location.location} · ${location.city}`}
-                  attachments={location.attachments}
-                  onChanged={onChanged}
-                />
-              )}
-            </div>
-          )}
+                  {location && (
+                    <LocationAttachmentsEditor
+                      locationLabel={`${location.location} · ${location.city}`}
+                      upload={upload}
+                    />
+                  )}
+                </div>
+              )
+            ))}
         </div>
 
         <div className="flex shrink-0 justify-between gap-2 border-t pt-3">
           <Button
             type="button"
             variant="ghost"
+            disabled={upload.busy}
             onClick={step === 0 ? () => onOpenChange(false) : () => setStep(step - 1)}
           >
             {step === 0 ? "Cancel" : "Back"}
           </Button>
 
-          {!isLast && (
+          {!isLast ? (
             <Button
               type="button"
-              disabled={!stepValid}
+              disabled={!campaignId}
               onClick={() => setStep(step + 1)}
             >
               Next
             </Button>
-          )}
-          {isLast && (
-            <Button type="button" onClick={() => onOpenChange(false)}>
-              Done
+          ) : (
+            /* Upload is the dialog's primary action, so it sits here rather
+               than inline under the thumbnails. The dialog closes itself on a
+               fully successful batch. */
+            <Button type="button" disabled={!upload.canUpload} onClick={upload.submit}>
+              {upload.busy ? (
+                <>
+                  <Loader2Icon className="animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <UploadCloudIcon />
+                  Upload{upload.count > 0 ? ` ${upload.count}` : ""}
+                </>
+              )}
             </Button>
           )}
         </div>

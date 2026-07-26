@@ -1,7 +1,8 @@
 import "server-only";
 import { Types } from "mongoose";
 import { connectDB } from "@/lib/db";
-import { Campaign, Client, Sales, Vendor } from "@/models";
+import { Attachment, Campaign, Client, Sales, Vendor } from "@/models";
+import { getBucketId, getStorage } from "@/lib/appwrite";
 import {
   type CampaignStatus,
   durationDays,
@@ -34,6 +35,66 @@ export type CampaignInput = {
 
 export function isValidId(id: string) {
   return Types.ObjectId.isValid(id);
+}
+
+/**
+ * Delete attachments and their Appwrite blobs — a whole campaign's worth,
+ * specific locations within it, or an explicit set of attachments.
+ *
+ * When attachments were embedded, the cascades were free: the subdocuments went
+ * with their parent. Now they must be explicit, and three callers need it —
+ * deleting a campaign, *editing* a campaign to drop a location, and the user
+ * deleting files from the preview dialog. The middle one doesn't look like a
+ * delete, which is exactly why this lives in one function rather than being
+ * inlined at each site. Missing any of them leaks Appwrite storage silently:
+ * no error, just cost.
+ *
+ * Mongo is the source of truth for the UI, so the rows go first and the blobs
+ * are best-effort — an orphaned blob nobody can see beats an attachment the
+ * user can never remove.
+ *
+ * Returns the ids actually removed, so an API caller can tell the client
+ * precisely what to drop rather than making it re-fetch.
+ */
+export async function deleteAttachmentsFor(scope: {
+  campaignId: Types.ObjectId | string;
+  /** Scope to specific locations. Omit for every location on the campaign. */
+  locationIds?: (Types.ObjectId | string)[];
+  /** Scope to specific attachments. Omit for all within the above scope. */
+  attachmentIds?: (Types.ObjectId | string)[];
+  /** Belt-and-braces ownership check when the ids came from a request. */
+  userId?: string;
+}): Promise<string[]> {
+  await connectDB();
+
+  // An empty explicit set means "nothing", not "everything" — without this the
+  // filter would widen to the whole scope and delete far more than asked.
+  if (scope.locationIds?.length === 0) return [];
+  if (scope.attachmentIds?.length === 0) return [];
+
+  const filter = {
+    campaignId: scope.campaignId,
+    ...(scope.userId ? { userId: scope.userId } : {}),
+    ...(scope.locationIds ? { locationId: { $in: scope.locationIds } } : {}),
+    ...(scope.attachmentIds ? { _id: { $in: scope.attachmentIds } } : {}),
+  };
+
+  const doomed = await Attachment.find(filter).select("fileId").lean();
+  if (doomed.length === 0) return [];
+
+  await Attachment.deleteMany(filter);
+
+  const storage = getStorage();
+  const bucketId = getBucketId();
+  await Promise.all(
+    doomed.map((a) =>
+      storage.deleteFile({ bucketId, fileId: a.fileId }).catch((err) => {
+        console.error(`Appwrite delete failed for file ${a.fileId}:`, err);
+      }),
+    ),
+  );
+
+  return doomed.map((a) => String(a._id));
 }
 
 /** Shape a location input into the fields the subdocument schema expects. */
@@ -119,7 +180,17 @@ export async function updateCampaignForUser(
       input.locations.map((l) => l.id).filter(Boolean) as string[],
     );
 
-    // Drop the locations the client no longer lists.
+    // Drop the locations the client no longer lists. Their attachments used to
+    // go with them for free while embedded; now this edit is a delete for the
+    // Attachment collection too, and skipping it would orphan the rows and
+    // leak their Appwrite blobs.
+    const droppedIds = campaign.locations
+      .filter((existing) => !keptIds.has(String(existing._id)))
+      .map((existing) => existing._id);
+    if (droppedIds.length > 0) {
+      await deleteAttachmentsFor({ campaignId: campaign._id, locationIds: droppedIds });
+    }
+
     campaign.locations = campaign.locations.filter((existing) =>
       keptIds.has(String(existing._id)),
     ) as typeof campaign.locations;
@@ -182,8 +253,11 @@ export async function deleteCampaignForUser(userId: string, id: string) {
   if (!isValidId(id)) return false;
   await connectDB();
   // Locations (and their reminders) are embedded, so they go with the document.
+  // Attachments no longer are, so they need an explicit cascade.
   const campaign = await Campaign.findOneAndDelete({ _id: id, userId });
-  return Boolean(campaign);
+  if (!campaign) return false;
+  await deleteAttachmentsFor({ campaignId: campaign._id });
+  return true;
 }
 
 /**

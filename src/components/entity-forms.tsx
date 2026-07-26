@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
-import { apiError, apiFetch } from "@/lib/http";
+import { useSaveNamed, useSaveSales } from "@/lib/queries/entities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,8 +10,13 @@ import { DialogFooter } from "@/components/ui/dialog";
 export type NamedItem = { id: string; name: string };
 export type SalesItem = { id: string; name: string; email: string };
 
-/** Add/edit form for vendors and clients (name only). Reused by the
- * dedicated management pages and by the campaign form's inline "create". */
+/**
+ * Add/edit form for vendors and clients (name only). Reused by the dedicated
+ * management pages and by the campaign form's inline "create".
+ *
+ * The mutation lives in useSaveNamed rather than here, so both callers get the
+ * success toast and cache invalidation without having to remember them.
+ */
 export function NamedResourceForm({
   resource,
   singular,
@@ -29,28 +33,18 @@ export function NamedResourceForm({
   onCancel?: () => void;
 }) {
   const [name, setName] = useState(editing?.name ?? defaultName ?? "");
-  const [saving, setSaving] = useState(false);
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    const res = editing
-      ? await apiFetch<NamedItem>(`/api/${resource}/${editing.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        })
-      : await apiFetch<NamedItem>(`/api/${resource}`, {
-          method: "POST",
-          body: JSON.stringify({ name }),
-        });
-    setSaving(false);
-    if (!res.ok) return toast.error(apiError(res.data));
-    toast.success(`${singular} ${editing ? "updated" : "added"}`);
-    onSaved(res.data);
-  }
+  const save = useSaveNamed(resource);
 
   return (
-    <form onSubmit={save} className="space-y-4">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        // onSaved is a local UI concern (close the dialog, select the new
+        // option), so it stays at the call site and only fires on success.
+        save.mutate({ id: editing?.id, name }, { onSuccess: onSaved });
+      }}
+      className="space-y-4"
+    >
       <div className="space-y-2">
         <Label htmlFor={`${resource}-name`}>Name</Label>
         <Input
@@ -68,8 +62,8 @@ export function NamedResourceForm({
             Cancel
           </Button>
         )}
-        <Button type="submit" disabled={saving || !name.trim()}>
-          {saving
+        <Button type="submit" disabled={save.isPending || !name.trim()}>
+          {save.isPending
             ? "Saving…"
             : editing
               ? "Save changes"
@@ -95,26 +89,19 @@ export function SalesForm({
 }) {
   const [name, setName] = useState(editing?.name ?? defaultName ?? "");
   const [email, setEmail] = useState(editing?.email ?? "");
-  const [saving, setSaving] = useState(false);
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    const payload = JSON.stringify({ name, email });
-    const res = editing
-      ? await apiFetch<SalesItem>(`/api/sales/${editing.id}`, {
-          method: "PATCH",
-          body: payload,
-        })
-      : await apiFetch<SalesItem>(`/api/sales`, { method: "POST", body: payload });
-    setSaving(false);
-    if (!res.ok) return toast.error(apiError(res.data));
-    toast.success(`Sales person ${editing ? "updated" : "added"}`);
-    onSaved(res.data);
-  }
+  const save = useSaveSales();
 
   return (
-    <form onSubmit={save} className="space-y-4">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate(
+          { id: editing?.id, name, email },
+          { onSuccess: (saved) => onSaved({ ...saved, email }) },
+        );
+      }}
+      className="space-y-4"
+    >
       <div className="space-y-2">
         <Label htmlFor="sales-name">Name</Label>
         <Input
@@ -145,9 +132,9 @@ export function SalesForm({
         )}
         <Button
           type="submit"
-          disabled={saving || !name.trim() || !email.trim()}
+          disabled={save.isPending || !name.trim() || !email.trim()}
         >
-          {saving ? "Saving…" : editing ? "Save changes" : "Add sales person"}
+          {save.isPending ? "Saving…" : editing ? "Save changes" : "Add sales person"}
         </Button>
       </DialogFooter>
     </form>

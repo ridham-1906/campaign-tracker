@@ -1,10 +1,11 @@
 import { requireSession } from "@/lib/auth";
-import { getCampaigns } from "@/lib/data";
 import { ImagesManager } from "@/components/images-manager";
 
 export default async function ImagesPage() {
-  const session = await requireSession();
-  const campaigns = await getCampaigns(session.userId);
+  // Attachment groups are fetched client-side through /api/images, which
+  // aggregates them in the database rather than flattening every campaign in
+  // the browser; the page only gates access.
+  await requireSession();
 
-  return <ImagesManager campaigns={campaigns} />;
+  return <ImagesManager />;
 }

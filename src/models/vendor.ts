@@ -10,6 +10,10 @@ export const vendorSchema = new Schema(
   { timestamps: true },
 );
 
+// The paginated list's default order. Without this the skip/limit sits behind
+// a blocking in-memory sort.
+vendorSchema.index({ userId: 1, name: 1 });
+
 export type VendorDoc = InferSchemaType<typeof vendorSchema> & { _id: Types.ObjectId };
 
 export const Vendor: Model<VendorDoc> =
