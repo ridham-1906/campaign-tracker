@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
-import { apiError, apiFetch } from "@/lib/http";
+import { useDeleteEntity, useSalesListQuery } from "@/lib/queries/entities";
 import { SalesForm } from "@/components/entity-forms";
 import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
@@ -17,17 +16,31 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
+import {
+  DataTable,
+  sortParams,
+  useTableState,
+} from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import type { SalesCountView } from "@/lib/view-types";
 
-type Item = { id: string; name: string; email: string; count: number };
+type Item = SalesCountView;
 
-export function SalesManager({ items }: { items: Item[] }) {
-  const router = useRouter();
+export function SalesManager() {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
+
+  const table = useTableState();
+  const query = useSalesListQuery({
+    page: table.pagination.pageIndex + 1,
+    limit: table.pagination.pageSize,
+    q: table.debouncedSearch || undefined,
+    ...sortParams(table.sorting),
+  });
+
+  const deleteSales = useDeleteEntity("sales");
 
   function openAdd() {
     setEditing(null);
@@ -49,12 +62,9 @@ export function SalesManager({ items }: { items: Item[] }) {
         confirmLabel: "Delete sales person",
       });
       if (!ok) return;
-      const res = await apiFetch(`/api/sales/${item.id}`, { method: "DELETE" });
-      if (!res.ok) return toast.error(apiError(res.data));
-      toast.success("Sales person deleted");
-      router.refresh();
+      deleteSales.mutate(item.id);
     },
-    [router, confirm],
+    [confirm, deleteSales],
   );
 
   const columns = useMemo<ColumnDef<Item>[]>(
@@ -76,6 +86,9 @@ export function SalesManager({ items }: { items: Item[] }) {
       {
         accessorKey: "count",
         header: "Campaigns",
+        // Counts cover the current page only, so the database can't order by
+        // them — see ENTITY_SORT_KEYS in lib/data.ts.
+        enableSorting: false,
         cell: ({ row }) =>
           row.original.count > 0 ? (
             <Badge variant="secondary" className="text-xs">
@@ -131,8 +144,17 @@ export function SalesManager({ items }: { items: Item[] }) {
         <CardContent className="flex min-h-0 flex-1 flex-col p-0">
           <DataTable
             columns={columns}
-            data={items}
-            searchPlaceholder="Search by name or email…"
+            data={query.data?.rows ?? []}
+            rowCount={query.data?.total ?? 0}
+            pagination={table.pagination}
+            onPaginationChange={table.setPagination}
+            sorting={table.sorting}
+            onSortingChange={table.setSorting}
+            search={table.search}
+            onSearchChange={table.setSearch}
+            isLoading={query.isLoading}
+            isFetching={query.isFetching}
+            searchPlaceholder="Search by name…"
             empty={
               <p className="p-8 text-center text-sm text-muted-foreground">
                 No sales persons yet.
@@ -155,10 +177,7 @@ export function SalesManager({ items }: { items: Item[] }) {
           <SalesForm
             key={editing?.id ?? "new"}
             editing={editing}
-            onSaved={() => {
-              setOpen(false);
-              router.refresh();
-            }}
+            onSaved={() => setOpen(false)}
           />
         </DialogContent>
       </Dialog>

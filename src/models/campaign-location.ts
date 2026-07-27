@@ -1,6 +1,5 @@
 import "server-only";
 import { Schema, Types, InferSchemaType } from "mongoose";
-import { attachmentSchema } from "@/models/attachment";
 
 export const campaignLocationSchema = new Schema({
   city: { type: String, required: true },
@@ -21,7 +20,11 @@ export const campaignLocationSchema = new Schema({
   // Pending-creative nag is daily, so only the last send date is tracked.
   creativeReminderSentAt: { type: Date, default: null },
 
-  attachments: { type: [attachmentSchema], default: [] },
+  // Attachments live in their own collection keyed by (campaignId, locationId)
+  // — see models/attachment.ts. They are deliberately not embedded here: that
+  // made the images screen unwind every campaign to page over files, put
+  // metadata the campaign table never renders into its payload, and turned each
+  // single-file upload into a rewrite of the whole campaign document.
 });
 
 export type CampaignLocationDoc = InferSchemaType<

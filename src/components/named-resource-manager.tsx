@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
-import { apiError, apiFetch } from "@/lib/http";
+import {
+  useDeleteEntity,
+  useNamedListQuery,
+  type NamedResource,
+} from "@/lib/queries/entities";
 import { NamedResourceForm } from "@/components/entity-forms";
 import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
@@ -16,27 +19,39 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
+import {
+  DataTable,
+  sortParams,
+  useTableState,
+} from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import type { NamedCountView } from "@/lib/view-types";
 
-type Item = { id: string; name: string; count: number };
+type Item = NamedCountView;
 
 export function NamedResourceManager({
   resource,
   singular,
   description,
-  items,
 }: {
-  resource: "vendors" | "clients";
+  resource: NamedResource;
   singular: string;
   description: string;
-  items: Item[];
 }) {
-  const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
+
+  const table = useTableState();
+  const query = useNamedListQuery(resource, {
+    page: table.pagination.pageIndex + 1,
+    limit: table.pagination.pageSize,
+    q: table.debouncedSearch || undefined,
+    ...sortParams(table.sorting),
+  });
+
+  const deleteEntity = useDeleteEntity(resource);
 
   function openAdd() {
     setEditing(null);
@@ -58,14 +73,9 @@ export function NamedResourceManager({
         confirmLabel: `Delete ${singular.toLowerCase()}`,
       });
       if (!ok) return;
-      const res = await apiFetch(`/api/${resource}/${item.id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) return toast.error(apiError(res.data));
-      toast.success(`${singular} deleted`);
-      router.refresh();
+      deleteEntity.mutate(item.id);
     },
-    [resource, singular, router, confirm],
+    [singular, confirm, deleteEntity],
   );
 
   const columns = useMemo<ColumnDef<Item>[]>(
@@ -80,6 +90,9 @@ export function NamedResourceManager({
       {
         accessorKey: "count",
         header: "Campaigns",
+        // Counts are computed for the current page only, so the database
+        // can't order by them — see ENTITY_SORT_KEYS in lib/data.ts.
+        enableSorting: false,
         cell: ({ row }) =>
           row.original.count > 0 ? (
             <Badge variant="secondary" className="text-xs">
@@ -93,7 +106,6 @@ export function NamedResourceManager({
         id: "actions",
         header: "",
         enableSorting: false,
-        enableGlobalFilter: false,
         meta: { className: "w-0 text-right" },
         cell: ({ row }) => (
           <RowActions>
@@ -133,7 +145,16 @@ export function NamedResourceManager({
         <CardContent className="flex min-h-0 flex-1 flex-col p-0">
           <DataTable
             columns={columns}
-            data={items}
+            data={query.data?.rows ?? []}
+            rowCount={query.data?.total ?? 0}
+            pagination={table.pagination}
+            onPaginationChange={table.setPagination}
+            sorting={table.sorting}
+            onSortingChange={table.setSorting}
+            search={table.search}
+            onSearchChange={table.setSearch}
+            isLoading={query.isLoading}
+            isFetching={query.isFetching}
             searchPlaceholder={`Search ${singular.toLowerCase()}s…`}
             empty={
               <p className="p-8 text-center text-sm text-muted-foreground">
@@ -156,10 +177,7 @@ export function NamedResourceManager({
             resource={resource}
             singular={singular}
             editing={editing}
-            onSaved={() => {
-              setOpen(false);
-              router.refresh();
-            }}
+            onSaved={() => setOpen(false)}
           />
         </DialogContent>
       </Dialog>

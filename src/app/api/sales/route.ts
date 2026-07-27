@@ -1,11 +1,14 @@
 import { z } from "zod";
+import { NextRequest } from "next/server";
 import { connectDB } from "@/lib/db";
 import { Sales } from "@/models";
+import { ENTITY_SORT_KEYS, getSalesPage } from "@/lib/data";
 import {
   authGuard,
   badRequest,
   created,
   ok,
+  parseListParams,
   readJson,
   serializeSales,
 } from "@/lib/api";
@@ -18,15 +21,20 @@ const createSchema = z.object({
   email: z.string().email(),
 });
 
-export async function GET() {
+/**
+ * Paginated, with campaign-usage counts for the rows on this page.
+ * Returns the `{rows,total,page,limit}` envelope — this used to be a bare
+ * array; see doc/rest-api.md.
+ */
+export async function GET(req: NextRequest) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
 
-  await connectDB();
-  const rows = await Sales.find({ userId: auth.session.userId })
-    .sort({ name: 1 })
-    .lean();
-  return ok(rows.map(serializeSales));
+  const params = parseListParams(req.nextUrl.searchParams, {
+    sortKeys: ENTITY_SORT_KEYS,
+    defaultSort: "name",
+  });
+  return ok(await getSalesPage(auth.session.userId, params));
 }
 
 export async function POST(req: Request) {

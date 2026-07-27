@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { getCampaign, getCampaigns } from "@/lib/data";
+import { NextRequest } from "next/server";
+import { CAMPAIGN_SORT_KEYS, getCampaign, getCampaignsPage } from "@/lib/data";
 import { createCampaignForUser, validateRefsOwned } from "@/lib/services";
-import { authGuard, badRequest, created, ok, readJson } from "@/lib/api";
+import { CAMPAIGN_STATUS_FILTERS } from "@/lib/view-types";
+import { authGuard, badRequest, created, ok, parseListParams, readJson } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,11 +31,33 @@ const createSchema = z.object({
   locations: z.array(locationSchema).min(1, "Add at least one location"),
 });
 
-export async function GET() {
+/** Same fallback-don't-400 policy as parseListParams: a junk status is "all". */
+const statusSchema = z.enum(CAMPAIGN_STATUS_FILTERS).catch("all");
+
+/**
+ * Paginated. Rows omit `locations[].attachments` — the campaigns table has no
+ * attachment column, and carrying them was roughly half the payload. Use
+ * `GET /api/campaigns/:id` for the full campaign.
+ *
+ * Returns the `{rows,total,page,limit}` envelope; this used to be a bare
+ * array of every campaign. See doc/rest-api.md.
+ */
+export async function GET(req: NextRequest) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
-  const campaigns = await getCampaigns(auth.session.userId);
-  return ok(campaigns);
+
+  const sp = req.nextUrl.searchParams;
+  const params = parseListParams(sp, {
+    sortKeys: CAMPAIGN_SORT_KEYS,
+    defaultSort: "endDate",
+  });
+
+  return ok(
+    await getCampaignsPage(auth.session.userId, {
+      ...params,
+      status: statusSchema.parse(sp.get("status") ?? undefined),
+    }),
+  );
 }
 
 export async function POST(req: Request) {

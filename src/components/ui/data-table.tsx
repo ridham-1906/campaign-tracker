@@ -4,14 +4,12 @@ import * as React from "react";
 import {
   type ColumnDef,
   type ExpandedState,
+  type PaginationState,
   type RowData,
   type SortingState,
   flexRender,
   getCoreRowModel,
   getExpandedRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import {
@@ -23,6 +21,7 @@ import {
   ChevronsLeftIcon,
   ChevronsRightIcon,
   ChevronsUpDownIcon,
+  Loader2Icon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -52,20 +51,50 @@ declare module "@tanstack/react-table" {
   }
 }
 
-const PAGE_SIZES = [5, 10, 20, 50];
+export const PAGE_SIZES = [5, 10, 20, 50];
 
+/**
+ * Server-driven table. Pagination, sorting and filtering all happen in the
+ * database — `data` is one page, and `rowCount` is the size of the whole
+ * result set.
+ *
+ * State is lifted rather than held here so the owner can feed it into a query
+ * key; that also makes `search` debounceable at the owner's level (see
+ * useDebounced below).
+ */
 export function DataTable<TData, TValue>({
   columns,
   data,
+  rowCount,
+  pagination,
+  onPaginationChange,
+  sorting,
+  onSortingChange,
+  search,
+  onSearchChange,
   searchPlaceholder = "Search…",
-  pageSize = 10,
+  isLoading = false,
+  isFetching = false,
   empty,
   renderExpanded,
+  onRowClick,
 }: {
   columns: ColumnDef<TData, TValue>[];
+  /** The current page of rows, already filtered and sorted by the server. */
   data: TData[];
+  /** Total matching rows across all pages. */
+  rowCount: number;
+  pagination: PaginationState;
+  onPaginationChange: React.Dispatch<React.SetStateAction<PaginationState>>;
+  sorting: SortingState;
+  onSortingChange: React.Dispatch<React.SetStateAction<SortingState>>;
+  search: string;
+  onSearchChange: (value: string) => void;
   searchPlaceholder?: string;
-  pageSize?: number;
+  /** First load, with nothing to show yet. */
+  isLoading?: boolean;
+  /** A background refetch — rows on screen are still the previous page. */
+  isFetching?: boolean;
   /** Rendered instead of the table when there is no data at all. */
   empty?: React.ReactNode;
   /**
@@ -74,9 +103,12 @@ export function DataTable<TData, TValue>({
    * records (e.g. a campaign's locations) have their own column shape.
    */
   renderExpanded?: (row: TData) => React.ReactNode;
+  /**
+   * Makes rows activatable. Clicks originating from a button/link/input inside
+   * a cell are ignored, so row actions keep working.
+   */
+  onRowClick?: (row: TData) => void;
 }) {
-  const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = React.useState("");
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
 
   const expandable = Boolean(renderExpanded);
@@ -84,20 +116,25 @@ export function DataTable<TData, TValue>({
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, globalFilter, expanded },
-    onSortingChange: setSorting,
-    onGlobalFilterChange: setGlobalFilter,
+    rowCount,
+    state: { sorting, pagination, expanded },
+    // The server owns all three; the client row models would re-do the work
+    // on the current page only, which is worse than doing nothing.
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    onSortingChange,
+    onPaginationChange,
     onExpandedChange: setExpanded,
     getRowCanExpand: () => expandable,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize } },
   });
 
-  if (data.length === 0 && empty)
+  // Only bail out to the empty slot on a genuinely empty *unfiltered* result —
+  // "no rows for this search" is handled inside the table, where the search
+  // box is still reachable.
+  if (!isLoading && rowCount === 0 && !search && empty)
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
         {empty}
@@ -105,17 +142,21 @@ export function DataTable<TData, TValue>({
     );
 
   const rows = table.getRowModel().rows;
-  const pagination = table.getState().pagination;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 px-4 pt-4 pb-3">
+      <div className="flex shrink-0 items-center gap-2 px-4 pt-4 pb-3">
         <Input
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
           className="h-8 max-w-xs"
         />
+        {/* Inline rather than a full-table spinner: with keepPreviousData the
+            rows on screen are still valid, just one page behind. */}
+        {isFetching && !isLoading && (
+          <Loader2Icon className="size-4 animate-spin text-muted-foreground" />
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
@@ -180,7 +221,7 @@ export function DataTable<TData, TValue>({
                 colSpan={columns.length + (expandable ? 1 : 0)}
                 className="h-24 text-center text-sm text-muted-foreground"
               >
-                No results.
+                {isLoading ? "Loading…" : "No results."}
               </TableCell>
             </TableRow>
           ) : (
@@ -188,7 +229,33 @@ export function DataTable<TData, TValue>({
               const isExpanded = row.getIsExpanded();
               return (
                 <React.Fragment key={row.id}>
-                  <TableRow>
+                  <TableRow
+                    className={cn(onRowClick && "cursor-pointer")}
+                    {...(onRowClick && {
+                      role: "button",
+                      tabIndex: 0,
+                      onClick: (e: React.MouseEvent<HTMLTableRowElement>) => {
+                        // Row actions, links and the expand chevron live
+                        // inside cells; activating one must not also open
+                        // whatever the row itself does.
+                        if (
+                          (e.target as HTMLElement).closest(
+                            "button, a, input, [role='menuitem']",
+                          )
+                        ) {
+                          return;
+                        }
+                        onRowClick(row.original);
+                      },
+                      onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      },
+                    })}
+                  >
                     {expandable && (
                       <TableCell className="w-0 pl-4">
                         <button
@@ -242,16 +309,95 @@ export function DataTable<TData, TValue>({
         pageIndex={pagination.pageIndex}
         pageSize={pagination.pageSize}
         pageCount={table.getPageCount()}
-        filtered={table.getFilteredRowModel().rows.length}
+        filtered={rowCount}
         canPrevious={table.getCanPreviousPage()}
         canNext={table.getCanNextPage()}
-        onPageSize={(size) => table.setPageSize(size)}
+        // Changing the page size shifts every boundary, so go back to page 1
+        // rather than landing on an offset that no longer means anything.
+        onPageSize={(size) => table.setPagination({ pageIndex: 0, pageSize: size })}
         onPage={(index) => table.setPageIndex(index)}
         onPrevious={() => table.previousPage()}
         onNext={() => table.nextPage()}
       />
     </div>
   );
+}
+
+/**
+ * Debounce a value before it reaches a query key.
+ *
+ * Every keystroke used to re-filter in memory; now it would be a request, so
+ * the search box feeds this and the query sees only the settled value.
+ */
+export function useDebounced<T>(value: T, delay = 300) {
+  const [debounced, setDebounced] = React.useState(value);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+/**
+ * The state a server-driven DataTable needs, plus the resets that keep it
+ * coherent: changing the search term or the sort invalidates the current
+ * offset, since page 3 of the old result set may not exist in the new one.
+ *
+ * The resets live in the setters rather than an effect — the offset is
+ * derived from the query that produced it, so it's corrected at the moment
+ * that query changes rather than a render later.
+ */
+export function useTableState(defaultPageSize = 10) {
+  const [pagination, setPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: defaultPageSize,
+  });
+  const [sorting, setSortingState] = React.useState<SortingState>([]);
+  const [search, setSearchState] = React.useState("");
+  const debouncedSearch = useDebounced(search);
+
+  const toFirstPage = React.useCallback(
+    () => setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 })),
+    [],
+  );
+
+  const setSearch = React.useCallback(
+    (value: string) => {
+      setSearchState(value);
+      toFirstPage();
+    },
+    [toFirstPage],
+  );
+
+  const setSorting = React.useCallback<
+    React.Dispatch<React.SetStateAction<SortingState>>
+  >(
+    (value) => {
+      setSortingState(value);
+      toFirstPage();
+    },
+    [toFirstPage],
+  );
+
+  return {
+    pagination,
+    setPagination,
+    sorting,
+    setSorting,
+    search,
+    setSearch,
+    debouncedSearch,
+    toFirstPage,
+  };
+}
+
+/** Translate TanStack's SortingState into the API's `sort`/`dir` pair. */
+export function sortParams(sorting: SortingState) {
+  const first = sorting[0];
+  if (!first) return {};
+  return { sort: first.id, dir: first.desc ? ("desc" as const) : ("asc" as const) };
 }
 
 /**

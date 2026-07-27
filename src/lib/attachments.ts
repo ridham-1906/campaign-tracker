@@ -26,6 +26,41 @@ export const STAGE_LABELS: Record<AttachmentStage, string> = {
   end_date: "End date",
 };
 
+/** How attachments are bucketed for browsing: the three photo stages, plus decks. */
+export type AttachmentType = AttachmentStage | "document";
+
+export const ATTACHMENT_TYPES: readonly AttachmentType[] = [
+  ...ATTACHMENT_STAGES,
+  "document",
+];
+
+export const TYPE_LABELS: Record<AttachmentType, string> = {
+  ...STAGE_LABELS,
+  document: "Creative deck",
+};
+
+/** Per-type file tallies; a missing key means zero. */
+export type AttachmentTypeCounts = Partial<Record<AttachmentType, number>>;
+
+/** Documents and stage-less images both read as a creative deck. */
+export function attachmentTypeOf(a: {
+  kind: AttachmentKind;
+  stage: AttachmentStage | null;
+}): AttachmentType {
+  return a.kind === "image" && a.stage ? a.stage : "document";
+}
+
+export function countByType(
+  items: { kind: AttachmentKind; stage: AttachmentStage | null }[],
+): AttachmentTypeCounts {
+  const counts: AttachmentTypeCounts = {};
+  for (const item of items) {
+    const type = attachmentTypeOf(item);
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function formatAttachmentSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

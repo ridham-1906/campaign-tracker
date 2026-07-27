@@ -1,7 +1,8 @@
 "use client";
 
 import { toDateInputValue } from "@/lib/campaign";
-import type { LocationDraft, Option } from "@/components/campaign-form";
+import type { LocationDraft } from "@/components/campaign-form";
+import type { OptionView } from "@/lib/view-types";
 
 export type CampaignExcelImport = {
   locations: LocationDraft[];
@@ -181,7 +182,7 @@ function getCell(row: Row, columns: Map<keyof typeof HEADER_ALIASES, number>, ke
 
 export async function parseCampaignExcel(
   file: File,
-  vendors: Option[],
+  vendors: OptionView[],
 ): Promise<CampaignExcelImport> {
   const XLSX = await import("xlsx");
   const data = await file.arrayBuffer();

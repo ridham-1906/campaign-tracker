@@ -1,6 +1,8 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { getSession, type SessionPayload } from "@/lib/auth";
+import type { Page } from "@/lib/view-types";
 
 // ---- JSON response helpers ----
 export const ok = (data: unknown, status = 200) =>
@@ -59,6 +61,102 @@ export async function readJson(
   } catch {
     return { error: badRequest("Invalid JSON body") };
   }
+}
+
+// ---- List query params ----
+
+export type ListParams<S extends string = string> = {
+  page: number;
+  limit: number;
+  /** Derived from page/limit so callers never recompute it. */
+  skip: number;
+  q?: string;
+  sort: S;
+  /** Mongo sort direction, ready to spread into a $sort stage. */
+  dir: 1 | -1;
+};
+
+/** Accepts a route handler's URLSearchParams or a page's awaited searchParams. */
+type RawParams = URLSearchParams | Record<string, string | string[] | undefined>;
+
+function readParam(src: RawParams, key: string): string | undefined {
+  if (src instanceof URLSearchParams) return src.get(key) ?? undefined;
+  const v = src[key];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * Escape user input before it reaches a $regex. Unescaped, a stray `(` throws,
+ * `.*` matches everything, and nested quantifiers are a CPU DoS vector.
+ */
+export function escapeRegex(s: string) {
+  return s.replace(REGEX_SPECIALS, "\\$&");
+}
+
+export function searchRegex(q: string) {
+  return new RegExp(escapeRegex(q), "i");
+}
+
+/**
+ * `.catch()` rather than strict parsing throughout: a stale bookmark or a
+ * hand-edited query string should fall back to page 1, never 400.
+ */
+const paramsSchema = (maxLimit: number, defaultLimit: number) =>
+  z.object({
+    page: z.coerce.number().int().min(1).catch(1),
+    limit: z.coerce.number().int().min(1).max(maxLimit).catch(defaultLimit),
+    // Bounded as a second line of defence behind escapeRegex().
+    q: z.string().trim().min(1).max(100).optional().catch(undefined),
+    dir: z.enum(["asc", "desc"]).catch("asc"),
+  });
+
+export function parseListParams<S extends string>(
+  raw: RawParams,
+  opts: {
+    /**
+     * Allow-list of sortable keys. This is a security control, not ergonomics:
+     * `sort` is interpolated straight into a $sort key.
+     */
+    sortKeys: readonly S[];
+    defaultSort: S;
+    defaultDir?: "asc" | "desc";
+    defaultLimit?: number;
+    maxLimit?: number;
+  },
+): ListParams<S> {
+  const { defaultLimit = 20, maxLimit = 100 } = opts;
+
+  const parsed = paramsSchema(maxLimit, defaultLimit).parse({
+    page: readParam(raw, "page"),
+    limit: readParam(raw, "limit"),
+    q: readParam(raw, "q"),
+    dir: readParam(raw, "dir") ?? opts.defaultDir ?? "asc",
+  });
+
+  const rawSort = readParam(raw, "sort");
+  const sort = (opts.sortKeys as readonly string[]).includes(rawSort ?? "")
+    ? (rawSort as S)
+    : opts.defaultSort;
+
+  return {
+    page: parsed.page,
+    limit: parsed.limit,
+    skip: (parsed.page - 1) * parsed.limit,
+    q: parsed.q,
+    sort,
+    dir: parsed.dir === "desc" ? -1 : 1,
+  };
+}
+
+/** Wrap rows in the standard list envelope. */
+export function listResponse<T>(
+  rows: T[],
+  total: number,
+  p: ListParams,
+): Page<T> {
+  return { rows, total, page: p.page, limit: p.limit };
 }
 
 // ---- Serializers (Mongoose lean docs -> plain JSON) ----

@@ -2,31 +2,37 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
-import { apiError, apiFetch } from "@/lib/http";
 import { cn } from "@/lib/utils";
 import {
   daysUntil,
   formatDate,
-  isExpiringSoon,
   lifecycleState,
-  startOfDay,
   toDateInputValue,
 } from "@/lib/campaign";
+import {
+  useCampaignStatsQuery,
+  useCampaignsQuery,
+  useDeleteCampaign,
+  useSaveCampaign,
+  useSendReminder,
+} from "@/lib/queries/campaigns";
+import { useEntityOptions } from "@/lib/queries/entities";
 import { StatusBadge } from "@/components/status-badge";
 import { useConfirm } from "@/components/use-confirm";
 import {
   CampaignForm,
   emptyCampaign,
   type CampaignDraft,
-  type FormOptions,
   type LocationDraft,
 } from "@/components/campaign-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
+import {
+  DataTable,
+  sortParams,
+  useTableState,
+} from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
@@ -35,60 +41,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { AttachmentRow } from "@/components/location-attachments-editor";
+import type {
+  CampaignListLocationView,
+  CampaignListView,
+  CampaignStatusFilter,
+} from "@/lib/view-types";
 
-type Person = { id: string; name: string; email?: string };
-
-export type LocationRow = {
-  id: string;
-  city: string;
-  location: string;
-  type: string;
-  days: number;
-  status: string;
-  vendor: Person;
-  startDate: string;
-  endDate: string;
-  reminder: { date: string; sent: boolean; sentAt: string | null };
-  attachments: AttachmentRow[];
-};
-
-export type CampaignRow = {
-  id: string;
-  client: Person;
-  sales: Person;
-  locations: LocationRow[];
-};
+export type LocationRow = CampaignListLocationView;
+export type CampaignRow = CampaignListView;
 
 /** A location satisfies the `{status, endDate}` shape the helpers expect. */
 function stateOf(l: LocationRow) {
   return lifecycleState({ status: l.status, endDate: new Date(l.endDate) });
 }
 
-function expiringSoon(l: LocationRow) {
-  return isExpiringSoon({ status: l.status, endDate: new Date(l.endDate) });
-}
-
-function sentToday(l: LocationRow) {
-  if (!l.reminder.sentAt) return false;
-  return (
-    startOfDay(new Date(l.reminder.sentAt)).getTime() ===
-    startOfDay(new Date()).getTime()
-  );
-}
-
-/** Chased daily by the cron: pending creative and not past its end date. */
-function creativePending(l: LocationRow) {
-  return l.status === "PENDING_CREATIVE" && daysUntil(new Date(l.endDate)) >= 0;
-}
-
-// Campaign-level rollups over the locations.
+/**
+ * Campaign-level rollups over the locations. These still run on the client for
+ * per-row rendering; the equivalent predicates for filtering and for the stat
+ * tiles live in statusFilters() in lib/data.ts, expressed as $elemMatch.
+ */
 const anyLive = (c: CampaignRow) => c.locations.some((l) => stateOf(l) === "LIVE");
 const allEnded = (c: CampaignRow) =>
   c.locations.length > 0 && c.locations.every((l) => stateOf(l) === "ENDED");
-const anyExpiring = (c: CampaignRow) => c.locations.some(expiringSoon);
-const anySentToday = (c: CampaignRow) => c.locations.some(sentToday);
-const anyCreativePending = (c: CampaignRow) => c.locations.some(creativePending);
 
 /** Soonest end date across the campaign — what the list is ordered by. */
 function earliestEnd(c: CampaignRow) {
@@ -122,54 +96,47 @@ function toDraft(c: CampaignRow): CampaignDraft {
   };
 }
 
-export function CampaignManager({
-  campaigns,
-  options,
-}: {
-  campaigns: CampaignRow[];
-  options: FormOptions;
-}) {
-  const router = useRouter();
+export function CampaignManager() {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CampaignDraft>(emptyCampaign);
-  const [saving, setSaving] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<
-    "all" | "LIVE" | "EXPIRING" | "ENDED" | "SENT_TODAY" | "CREATIVE"
-  >("all");
+  const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
 
-  const missingRefs =
-    options.clients.length === 0 || options.sales.length === 0;
+  const table = useTableState();
 
-  const stats = useMemo(() => {
-    const live = campaigns.filter(anyLive).length;
-    return {
-      total: campaigns.length,
-      live,
-      ended: campaigns.filter(allEnded).length,
-      expiring: campaigns.filter(anyExpiring).length,
-      sentToday: campaigns.filter(anySentToday).length,
-      creativePending: campaigns.filter(anyCreativePending).length,
-    };
-  }, [campaigns]);
+  // Filtering and paging now happen in the database, so the status filter is
+  // part of the query key rather than a useMemo over a fully-loaded array.
+  const query = useCampaignsQuery({
+    page: table.pagination.pageIndex + 1,
+    limit: table.pagination.pageSize,
+    q: table.debouncedSearch || undefined,
+    status: statusFilter === "all" ? undefined : statusFilter,
+    ...sortParams(table.sorting),
+  });
 
-  const filteredCampaigns = useMemo(() => {
-    switch (statusFilter) {
-      case "LIVE":
-        return campaigns.filter(anyLive);
-      case "ENDED":
-        return campaigns.filter(allEnded);
-      case "EXPIRING":
-        return campaigns.filter(anyExpiring);
-      case "SENT_TODAY":
-        return campaigns.filter(anySentToday);
-      case "CREATIVE":
-        return campaigns.filter(anyCreativePending);
-      default:
-        return campaigns;
-    }
-  }, [campaigns, statusFilter]);
+  // Totals across the whole result set — they can't be derived from one page.
+  const statsQuery = useCampaignStatsQuery(table.debouncedSearch || undefined);
+  const stats = statsQuery.data;
+
+  const saveCampaign = useSaveCampaign();
+  const deleteCampaign = useDeleteCampaign();
+  const sendReminderMutation = useSendReminder();
+
+  // Only needed to tell an empty list "add a client first" from "no matches",
+  // and both lists are already cached for the form's comboboxes.
+  const { data: clientOptions = [] } = useEntityOptions("clients");
+  const { data: salesOptions = [] } = useEntityOptions("sales");
+  const missingRefs = clientOptions.length === 0 || salesOptions.length === 0;
+
+  const campaigns = query.data?.rows ?? [];
+
+  function setFilter(next: CampaignStatusFilter) {
+    setStatusFilter(next);
+    // The new filter has its own row count, so any offset into the old one is
+    // meaningless.
+    table.toFirstPage();
+  }
 
   function openAdd() {
     setEditingId(null);
@@ -183,55 +150,41 @@ export function CampaignManager({
     setOpen(true);
   }, []);
 
-  async function save() {
-    setSaving(true);
-    const payload = JSON.stringify({
-      clientId: draft.clientId,
-      salesId: draft.salesId,
-      locations: draft.locations.map((l) => ({
-        ...(l.id ? { id: l.id } : {}),
-        city: l.city,
-        location: l.location,
-        type: l.type,
-        vendorId: l.vendorId,
-        startDate: l.startDate,
-        endDate: l.endDate,
-        status: l.status,
-      })),
-    });
-    const res = editingId
-      ? await apiFetch(`/api/campaigns/${editingId}`, {
-          method: "PATCH",
-          body: payload,
-        })
-      : await apiFetch(`/api/campaigns`, { method: "POST", body: payload });
-    setSaving(false);
-    if (!res.ok) return toast.error(apiError(res.data));
-    toast.success(`Campaign ${editingId ? "updated" : "created"}`);
-    setOpen(false);
-    router.refresh();
+  function save() {
+    saveCampaign.mutate(
+      {
+        id: editingId,
+        payload: {
+          clientId: draft.clientId,
+          salesId: draft.salesId,
+          locations: draft.locations.map((l) => ({
+            ...(l.id ? { id: l.id } : {}),
+            city: l.city,
+            location: l.location,
+            type: l.type,
+            vendorId: l.vendorId,
+            startDate: l.startDate,
+            endDate: l.endDate,
+            status: l.status,
+          })),
+        },
+      },
+      // Closing the dialog is a local UI concern, so it stays here — and only
+      // fires on success, leaving the form intact if the write failed.
+      { onSuccess: () => setOpen(false) },
+    );
   }
 
   /** Omit `locationId` to send one digest covering every live location. */
   const sendReminder = useCallback(
-    async (c: CampaignRow, locationId?: string) => {
-      const res = await apiFetch<{ locations: number }>(
-        `/api/campaigns/${c.id}/send-reminder`,
-        {
-          method: "POST",
-          body: JSON.stringify(locationId ? { locationId } : {}),
-        },
-      );
-      if (!res.ok) return toast.error(apiError(res.data, "Failed to send"));
-      const n = res.data?.locations ?? 1;
-      toast.success(
-        `Reminder for ${n} location${n === 1 ? "" : "s"} sent to ${
-          c.sales.email ?? c.sales.name
-        }`,
-      );
-      router.refresh();
+    (c: CampaignRow, locationId?: string) => {
+      sendReminderMutation.mutate({
+        campaignId: c.id,
+        locationId,
+        recipient: c.sales.email ?? c.sales.name,
+      });
     },
-    [router],
+    [sendReminderMutation],
   );
 
   const remove = useCallback(
@@ -242,12 +195,9 @@ export function CampaignManager({
         confirmLabel: "Delete campaign",
       });
       if (!ok) return;
-      const res = await apiFetch(`/api/campaigns/${c.id}`, { method: "DELETE" });
-      if (!res.ok) return toast.error(apiError(res.data));
-      toast.success("Campaign deleted");
-      router.refresh();
+      deleteCampaign.mutate(c.id);
     },
-    [router, confirm],
+    [confirm, deleteCampaign],
   );
 
   const columns = useMemo<ColumnDef<CampaignRow>[]>(
@@ -267,12 +217,11 @@ export function CampaignManager({
       },
       {
         id: "locations",
-        // Searchable by any of its locations' names, cities and vendors.
-        accessorFn: (c) =>
-          c.locations
-            .map((l) => `${l.location} ${l.city} ${l.type} ${l.vendor.name}`)
-            .join(" "),
+        // The search term now goes to the server, which matches it against
+        // every location's name, city, type and vendor — see buildSearch()
+        // in lib/data.ts.
         header: "Locations",
+        enableSorting: false,
         cell: ({ row }) => {
           const n = row.original.locations.length;
           return (
@@ -283,10 +232,10 @@ export function CampaignManager({
         },
       },
       {
+        // Sort ids match CAMPAIGN_SORT_KEYS in lib/data.ts — the server orders
+        // by the min/max across each campaign's locations.
         id: "dates",
-        accessorFn: (c) => earliestStart(c),
         header: "Runs",
-        enableGlobalFilter: false,
         cell: ({ row }) => (
           <span>
             {formatDate(new Date(earliestStart(row.original)))} –{" "}
@@ -296,9 +245,7 @@ export function CampaignManager({
       },
       {
         id: "endDate",
-        accessorFn: (c) => earliestEnd(c),
         header: "Next to end",
-        enableGlobalFilter: false,
         cell: ({ row }) => {
           const left = daysUntil(new Date(earliestEnd(row.original)));
           const ended = allEnded(row.original);
@@ -315,8 +262,9 @@ export function CampaignManager({
       },
       {
         id: "status",
-        accessorFn: (c) => (allEnded(c) ? "ENDED" : "LIVE"),
         header: "Status",
+        // Filtered via the stat tiles, which query the server.
+        enableSorting: false,
         cell: ({ row }) => {
           const c = row.original;
           const live = c.locations.filter((l) => stateOf(l) === "LIVE").length;
@@ -349,7 +297,6 @@ export function CampaignManager({
         id: "actions",
         header: "",
         enableSorting: false,
-        enableGlobalFilter: false,
         meta: { className: "w-0 text-right" },
         cell: ({ row }) => (
           <RowActions>
@@ -479,46 +426,46 @@ export function CampaignManager({
       <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat
           label="Total"
-          value={stats.total}
+          value={stats?.total}
           active={statusFilter === "all"}
-          onClick={() => setStatusFilter("all")}
+          onClick={() => setFilter("all")}
         />
         <Stat
           label="Live"
-          value={stats.live}
+          value={stats?.live}
           active={statusFilter === "LIVE"}
-          onClick={() => setStatusFilter((f) => (f === "LIVE" ? "all" : "LIVE"))}
+          onClick={() => setFilter(statusFilter === "LIVE" ? "all" : "LIVE")}
         />
         <Stat
           label="Expiring soon"
-          value={stats.expiring}
+          value={stats?.expiring}
           accent="amber"
           active={statusFilter === "EXPIRING"}
           onClick={() =>
-            setStatusFilter((f) => (f === "EXPIRING" ? "all" : "EXPIRING"))
+            setFilter(statusFilter === "EXPIRING" ? "all" : "EXPIRING")
           }
         />
         <Stat
           label="Ended"
-          value={stats.ended}
+          value={stats?.ended}
           active={statusFilter === "ENDED"}
-          onClick={() => setStatusFilter((f) => (f === "ENDED" ? "all" : "ENDED"))}
+          onClick={() => setFilter(statusFilter === "ENDED" ? "all" : "ENDED")}
         />
         <Stat
           label="Creative reminders today"
-          value={stats.creativePending}
+          value={stats?.creativePending}
           accent="blue"
           active={statusFilter === "CREATIVE"}
           onClick={() =>
-            setStatusFilter((f) => (f === "CREATIVE" ? "all" : "CREATIVE"))
+            setFilter(statusFilter === "CREATIVE" ? "all" : "CREATIVE")
           }
         />
         <Stat
           label="Reminders sent today"
-          value={stats.sentToday}
+          value={stats?.sentToday}
           active={statusFilter === "SENT_TODAY"}
           onClick={() =>
-            setStatusFilter((f) => (f === "SENT_TODAY" ? "all" : "SENT_TODAY"))
+            setFilter(statusFilter === "SENT_TODAY" ? "all" : "SENT_TODAY")
           }
         />
       </div>
@@ -527,11 +474,20 @@ export function CampaignManager({
         <CardContent className="flex min-h-0 flex-1 flex-col p-0">
           <DataTable
             columns={columns}
-            data={filteredCampaigns}
+            data={campaigns}
+            rowCount={query.data?.total ?? 0}
+            pagination={table.pagination}
+            onPaginationChange={table.setPagination}
+            sorting={table.sorting}
+            onSortingChange={table.setSorting}
+            search={table.search}
+            onSearchChange={table.setSearch}
+            isLoading={query.isLoading}
+            isFetching={query.isFetching}
             renderExpanded={renderLocations}
             searchPlaceholder="Search client, sales, location, city, vendor…"
             empty={
-              campaigns.length === 0 ? (
+              statusFilter === "all" ? (
                 <div className="flex flex-col items-center gap-3 py-16 text-center">
                   <p className="text-sm text-muted-foreground">
                     No campaigns yet.
@@ -563,7 +519,7 @@ export function CampaignManager({
                           : `that are ${statusFilter.toLowerCase()}`}
                     .
                   </p>
-                  <Button variant="outline" onClick={() => setStatusFilter("all")}>
+                  <Button variant="outline" onClick={() => setFilter("all")}>
                     Clear filter
                   </Button>
                 </div>
@@ -585,9 +541,8 @@ export function CampaignManager({
             key={editingId ?? "new"}
             draft={draft}
             setDraft={setDraft}
-            options={options}
             editing={Boolean(editingId)}
-            saving={saving}
+            saving={saveCampaign.isPending}
             onSubmit={save}
             onCancel={() => setOpen(false)}
           />
@@ -607,7 +562,8 @@ function Stat({
   onClick,
 }: {
   label: string;
-  value: number;
+  /** Undefined while the counts query is still in flight. */
+  value: number | undefined;
   accent?: "amber" | "blue";
   active?: boolean;
   onClick?: () => void;
@@ -625,7 +581,9 @@ function Stat({
       )}
     >
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("text-lg font-semibold", accentClass)}>{value}</p>
+      <p className={cn("text-lg font-semibold", accentClass)}>
+        {value ?? "—"}
+      </p>
     </button>
   );
 }

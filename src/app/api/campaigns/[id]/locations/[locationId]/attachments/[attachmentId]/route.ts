@@ -1,11 +1,37 @@
 import { getBucketId, getStorage } from "@/lib/appwrite";
-import { findOwnedLocation } from "@/lib/services";
+import { isValidId } from "@/lib/services";
+import { connectDB } from "@/lib/db";
+import { Attachment } from "@/models";
 import { authGuard, notFound, ok } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Params = { params: Promise<{ id: string; locationId: string; attachmentId: string }> };
+type Params = {
+  params: Promise<{ id: string; locationId: string; attachmentId: string }>;
+};
+
+/**
+ * Attachments live in their own collection now, so ownership is a single
+ * scoped lookup rather than loading the campaign and scanning its locations.
+ * campaignId/locationId stay in the filter so a valid attachment id from
+ * another location can't be read through this route's path.
+ */
+async function findOwned(
+  userId: string,
+  campaignId: string,
+  locationId: string,
+  attachmentId: string,
+) {
+  if (![campaignId, locationId, attachmentId].every(isValidId)) return null;
+  await connectDB();
+  return Attachment.findOne({
+    _id: attachmentId,
+    userId,
+    campaignId,
+    locationId,
+  });
+}
 
 /** View/download a single attachment. Streamed through us — the browser
  * never talks to Appwrite directly, same as every other read in this app. */
@@ -14,11 +40,11 @@ export async function GET(_req: Request, { params }: Params) {
   if ("error" in auth) return auth.error;
   const { id, locationId, attachmentId } = await params;
 
-  const found = await findOwnedLocation(auth.session.userId, id, locationId);
-  if (!found) return notFound("Location not found");
-
-  const attachment = found.location.attachments.find(
-    (a) => String(a._id) === attachmentId,
+  const attachment = await findOwned(
+    auth.session.userId,
+    id,
+    locationId,
+    attachmentId,
   );
   if (!attachment) return notFound("Attachment not found");
 
@@ -51,20 +77,16 @@ export async function DELETE(_req: Request, { params }: Params) {
   if ("error" in auth) return auth.error;
   const { id, locationId, attachmentId } = await params;
 
-  const found = await findOwnedLocation(auth.session.userId, id, locationId);
-  if (!found) return notFound("Location not found");
-  const { campaign, location } = found;
-
-  const attachment = location.attachments.find(
-    (a) => String(a._id) === attachmentId,
+  const attachment = await findOwned(
+    auth.session.userId,
+    id,
+    locationId,
+    attachmentId,
   );
   if (!attachment) return notFound("Attachment not found");
 
-  const fileId = attachment.fileId;
-  location.attachments = location.attachments.filter(
-    (a) => String(a._id) !== attachmentId,
-  ) as typeof location.attachments;
-  await campaign.save();
+  const { fileId } = attachment;
+  await attachment.deleteOne();
 
   try {
     await getStorage().deleteFile({ bucketId: getBucketId(), fileId });
