@@ -16,11 +16,14 @@ import {
   IMAGE_ACCEPT,
   MAX_DOCUMENT_BYTES,
   MAX_IMAGE_BYTES,
+  PHOTO_TYPES,
+  PHOTO_TYPE_LABELS,
   STAGE_LABELS,
   formatAttachmentSize,
   validateAttachmentFile,
   type AttachmentKind,
   type AttachmentStage,
+  type PhotoType,
 } from "@/lib/attachments";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -48,6 +51,10 @@ const TYPE_OPTIONS: { value: UploadType; label: string }[] = [
 const TYPE_LABELS = Object.fromEntries(
   TYPE_OPTIONS.map((o) => [o.value, o.label]),
 ) as Record<UploadType, string>;
+
+const PHOTO_TYPE_OPTIONS: { value: PhotoType; label: string }[] = PHOTO_TYPES.map(
+  (p) => ({ value: p, label: PHOTO_TYPE_LABELS[p] }),
+);
 
 /** Thumbnails shown before the rest collapse into a "+N" tile. */
 const PREVIEW_LIMIT = 6;
@@ -78,6 +85,7 @@ export function useLocationUpload({
   onUploaded?: () => void;
 }) {
   const [type, setType] = useState<UploadType>("installation");
+  const [photoType, setPhotoType] = useState<PhotoType>("newspaper");
   const [picked, setPicked] = useState<Picked[]>([]);
 
   const uploadAttachments = useUploadAttachments();
@@ -154,6 +162,13 @@ export function useLocationUpload({
     setType(next);
   }
 
+  function changePhotoType(next: PhotoType) {
+    // Queued files belong to the photo type they were picked for.
+    release(picked);
+    setPicked([]);
+    setPhotoType(next);
+  }
+
   function submit() {
     if (picked.length === 0 || busy) return;
 
@@ -163,6 +178,7 @@ export function useLocationUpload({
         locationId,
         kind,
         stage: isDocument ? undefined : type,
+        photoType: isDocument ? undefined : photoType,
         files: picked.map((p) => p.file),
       },
       {
@@ -189,6 +205,8 @@ export function useLocationUpload({
   return {
     type,
     changeType,
+    photoType,
+    changePhotoType,
     kind,
     isDocument,
     picked,
@@ -223,24 +241,49 @@ export function LocationAttachmentsEditor({
             {locationLabel}
           </span>
         </div>
-        <Select
-          value={upload.type}
-          disabled={upload.busy}
-          onValueChange={(v) => upload.changeType((v as UploadType) ?? "installation")}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue>
-              {(v: UploadType | null) => TYPE_LABELS[v ?? "installation"]}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {TYPE_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className={cn("grid gap-2", upload.isDocument ? "grid-cols-1" : "grid-cols-2")}>
+          <Select
+            value={upload.type}
+            disabled={upload.busy}
+            onValueChange={(v) => upload.changeType((v as UploadType) ?? "installation")}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                {(v: UploadType | null) => TYPE_LABELS[v ?? "installation"]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {TYPE_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {!upload.isDocument && (
+            <Select
+              value={upload.photoType}
+              disabled={upload.busy}
+              onValueChange={(v) =>
+                upload.changePhotoType((v as PhotoType) ?? "newspaper")
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {PHOTO_TYPE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
       </div>
 
       <DropZone kind={upload.kind} disabled={upload.busy} onFiles={upload.addFiles} />

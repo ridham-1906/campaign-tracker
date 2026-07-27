@@ -1,6 +1,6 @@
 import "server-only";
 import mongoose, { Schema, Model, Types, InferSchemaType } from "mongoose";
-import { ATTACHMENT_KINDS, ATTACHMENT_STAGES } from "@/lib/attachments";
+import { ATTACHMENT_KINDS, ATTACHMENT_STAGES, PHOTO_TYPES } from "@/lib/attachments";
 
 // ---------------- Attachment ----------------
 /**
@@ -26,6 +26,8 @@ export const attachmentSchema = new Schema({
 
   kind: { type: String, enum: ATTACHMENT_KINDS, required: true },
   stage: { type: String, enum: ATTACHMENT_STAGES, default: null },
+  // Set for images only, alongside `stage` — what the photo actually shows.
+  photoType: { type: String, enum: PHOTO_TYPES, default: null },
   fileId: { type: String, required: true },
   filename: { type: String, required: true },
   mimeType: { type: String, required: true },

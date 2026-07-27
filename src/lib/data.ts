@@ -113,6 +113,7 @@ type LeanAttachment = {
   _id: unknown;
   kind: string;
   stage?: string | null;
+  photoType?: string | null;
   filename: string;
   mimeType: string;
   size: number;
@@ -128,6 +129,7 @@ export function attachmentViewFrom(
     id: String(a._id),
     kind: a.kind as AttachmentView["kind"],
     stage: (a.stage ?? null) as AttachmentView["stage"],
+    photoType: (a.photoType ?? null) as AttachmentView["photoType"],
     filename: a.filename,
     mimeType: a.mimeType,
     size: a.size,

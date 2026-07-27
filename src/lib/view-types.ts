@@ -4,7 +4,7 @@
 // components import them directly instead of hand-maintaining mirrors that
 // silently drift from the server's shape. `lib/data.ts` re-exports them.
 
-import type { AttachmentKind, AttachmentStage } from "@/lib/attachments";
+import type { AttachmentKind, AttachmentStage, PhotoType } from "@/lib/attachments";
 
 export type PersonView = { id: string; name: string; email?: string };
 
@@ -12,6 +12,7 @@ export type AttachmentView = {
   id: string;
   kind: AttachmentKind;
   stage: AttachmentStage | null;
+  photoType: PhotoType | null;
   filename: string;
   mimeType: string;
   size: number;

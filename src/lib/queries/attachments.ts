@@ -10,7 +10,7 @@ import {
 import { ApiError, apiError, apiJson, apiUploadJson } from "@/lib/http";
 import { type ListKeyParams, queryKeys } from "@/lib/query-keys";
 import { listQuery } from "@/lib/queries/entities";
-import type { AttachmentKind, AttachmentStage } from "@/lib/attachments";
+import type { AttachmentKind, AttachmentStage, PhotoType } from "@/lib/attachments";
 import type {
   AttachmentView,
   CampaignImagesRowView,
@@ -36,6 +36,7 @@ export type UploadBatch = {
   locationId: string;
   kind: AttachmentKind;
   stage?: AttachmentStage;
+  photoType?: PhotoType;
   files: File[];
   /** Called after each file so the caller can drive its own progress UI. */
   onProgress?: (done: number, total: number) => void;
@@ -77,6 +78,7 @@ export function useUploadAttachments() {
           fd.append("file", file);
           fd.append("kind", batch.kind);
           if (batch.stage) fd.append("stage", batch.stage);
+          if (batch.photoType) fd.append("photoType", batch.photoType);
 
           uploaded.push(
             await apiUploadJson<AttachmentView>(
@@ -117,6 +119,40 @@ export function useUploadAttachments() {
         ],
       );
       invalidateAttachmentViews(queryClient, batch.campaignId);
+    },
+  });
+}
+
+/** Reclassify an already-uploaded image's stage and/or photo type. */
+export type UpdateAttachmentInput = {
+  campaignId: string;
+  locationId: string;
+  attachmentId: string;
+  stage?: AttachmentStage;
+  photoType?: PhotoType;
+};
+
+export function useUpdateAttachment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      campaignId,
+      locationId,
+      attachmentId,
+      stage,
+      photoType,
+    }: UpdateAttachmentInput) =>
+      apiJson<AttachmentView>(
+        `/api/campaigns/${campaignId}/locations/${locationId}/attachments/${attachmentId}`,
+        { method: "PATCH", body: JSON.stringify({ stage, photoType }) },
+      ),
+
+    onSuccess: (updated, { campaignId, locationId }) => {
+      patchCachedAttachments(queryClient, campaignId, locationId, (prev) =>
+        prev.map((a) => (a.id === updated.id ? updated : a)),
+      );
+      invalidateAttachmentViews(queryClient, campaignId);
     },
   });
 }

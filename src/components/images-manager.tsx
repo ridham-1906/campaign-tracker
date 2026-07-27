@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ImageIcon, PlusIcon } from "lucide-react";
+import { ImageIcon, Loader2Icon, PlusIcon } from "lucide-react";
 import { formatDate } from "@/lib/campaign";
+import { useCampaignQuery } from "@/lib/queries/campaigns";
 import { useImagesQuery } from "@/lib/queries/attachments";
 import { AddImagesWizard } from "@/components/add-images-wizard";
 import { ImagePreviewDialog } from "@/components/image-preview/dialog";
@@ -24,6 +25,9 @@ export function ImagesManager() {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState<CampaignImagesRowView | null>(null);
+  const [previewLocationId, setPreviewLocationId] = useState<string | null>(
+    null,
+  );
 
   const table = useTableState();
   const query = useImagesQuery({
@@ -38,8 +42,10 @@ export function ImagesManager() {
     setWizardOpen(true);
   }
 
-  function openPreview(row: CampaignImagesRowView) {
+  /** Omit `locationId` to open on the campaign's location picker. */
+  function openPreview(row: CampaignImagesRowView, locationId?: string) {
     setPreview(row);
+    setPreviewLocationId(locationId ?? null);
     setPreviewOpen(true);
   }
 
@@ -75,6 +81,16 @@ export function ImagesManager() {
     [],
   );
 
+  const renderLocations = useCallback(
+    (row: CampaignImagesRowView) => (
+      <ImageLocationsPanel
+        row={row}
+        onSelectLocation={(locationId) => openPreview(row, locationId)}
+      />
+    ),
+    [],
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="flex shrink-0 items-center justify-between">
@@ -105,6 +121,7 @@ export function ImagesManager() {
             isLoading={query.isLoading}
             isFetching={query.isFetching}
             onRowClick={openPreview}
+            renderExpanded={renderLocations}
             searchPlaceholder="Search client, location, city…"
             empty={
               <div className="flex flex-col items-center gap-3 py-16 text-center">
@@ -132,9 +149,98 @@ export function ImagesManager() {
 
       <ImagePreviewDialog
         row={preview}
+        locationId={previewLocationId}
         open={previewOpen}
         onOpenChange={setPreviewOpen}
       />
+    </div>
+  );
+}
+
+/**
+ * A campaign's locations, revealed by the row's expand chevron — how many
+ * files each one has and when it last received an upload. Fetches the
+ * campaign detail itself (rather than threading it down from the row, which
+ * only carries the campaign-level rollup) so the request only happens once a
+ * row is actually expanded.
+ */
+function ImageLocationsPanel({
+  row,
+  onSelectLocation,
+}: {
+  row: CampaignImagesRowView;
+  onSelectLocation: (locationId: string) => void;
+}) {
+  const query = useCampaignQuery(row.id);
+  const locations = query.data?.locations ?? [];
+
+  if (query.isLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+        <Loader2Icon className="size-4 animate-spin" />
+        Loading locations…
+      </div>
+    );
+  }
+
+  if (locations.length === 0) {
+    return (
+      <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+        No locations on this campaign.
+      </p>
+    );
+  }
+
+  return (
+    <div className="px-4 py-3">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground">
+            <th className="pb-2 pr-4 font-medium">Location</th>
+            <th className="pb-2 pr-4 font-medium">City</th>
+            <th className="pb-2 pr-4 font-medium">Type</th>
+            <th className="pb-2 pr-4 font-medium">Files</th>
+            <th className="pb-2 font-medium">Last upload</th>
+          </tr>
+        </thead>
+        <tbody>
+          {locations.map((l) => {
+            const latest = l.attachments.reduce<string | null>(
+              (max, a) => (!max || a.uploadedAt > max ? a.uploadedAt : max),
+              null,
+            );
+            return (
+              <tr
+                key={l.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectLocation(l.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectLocation(l.id);
+                  }
+                }}
+                className="cursor-pointer border-t outline-none hover:bg-muted/50 focus-visible:bg-muted/50"
+              >
+                <td className="py-2 pr-4 font-medium">{l.location}</td>
+                <td className="py-2 pr-4">{l.city}</td>
+                <td className="py-2 pr-4">{l.type}</td>
+                <td className="py-2 pr-4">
+                  {l.attachments.length === 0 ? (
+                    <span className="text-muted-foreground">0</span>
+                  ) : (
+                    l.attachments.length
+                  )}
+                </td>
+                <td className="py-2 text-muted-foreground">
+                  {latest ? formatDate(latest) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -8,6 +8,16 @@ export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 export const ATTACHMENT_STAGES = ["installation", "mid_date", "end_date"] as const;
 export type AttachmentStage = (typeof ATTACHMENT_STAGES)[number];
 
+export const PHOTO_TYPES = ["newspaper", "long_shot", "close_shot", "gps"] as const;
+export type PhotoType = (typeof PHOTO_TYPES)[number];
+
+export const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
+  newspaper: "Newspaper",
+  long_shot: "Long shot",
+  close_shot: "Close shot",
+  gps: "GPS",
+};
+
 export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export const DOCUMENT_MIME_TYPES = [
   "application/vnd.ms-powerpoint", // .ppt

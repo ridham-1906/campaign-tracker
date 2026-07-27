@@ -17,7 +17,8 @@ import type { CampaignImagesRowView } from "@/lib/view-types";
 
 /**
  * A campaign's uploads: pick a location, then browse that location's files by
- * type. Opened from a row of the images table, which is one whole campaign.
+ * type. Opened from a row of the images table, which is one whole campaign,
+ * or from a single location expanded beneath it.
  *
  * Reads the campaign detail — which already carries every location's
  * attachments — so both steps come from one request, and uploads elsewhere in
@@ -25,16 +26,29 @@ import type { CampaignImagesRowView } from "@/lib/view-types";
  */
 export function ImagePreviewDialog({
   row,
+  locationId,
   open,
   onOpenChange,
 }: {
   /** The clicked row; null while the dialog has never been opened. */
   row: CampaignImagesRowView | null;
+  /** Preselects a location, skipping the picker — set when opened from one. */
+  locationId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { confirm, confirmDialog } = useConfirm();
   const [picked, setPicked] = useState<string | null>(null);
+
+  // Each open() call may target a different location, and the dialog stays
+  // mounted across opens, so `picked` is re-seeded from `locationId` the
+  // moment `open` flips true — adjusted during render rather than an effect,
+  // per https://react.dev/learn/you-might-not-need-an-effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setPicked(locationId ?? null);
+  }
 
   const campaignId = row?.id ?? null;
   const query = useCampaignQuery(open ? campaignId : null);
