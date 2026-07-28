@@ -17,12 +17,22 @@ export const locationSchema = z
     type: z.string().min(1),
     vendorId: z.string().min(1),
     startDate: z.coerce.date(),
+    // Optional — the client always sends the key, an empty string meaning
+    // "not set" rather than an invalid date.
+    midDate: z.preprocess(
+      (v) => (v === "" || v == null ? undefined : v),
+      z.coerce.date().optional(),
+    ),
     endDate: z.coerce.date(),
     status: z.enum(["LIVE", "ENDED", "PENDING_CREATIVE"]).optional(),
   })
   .refine((l) => l.endDate >= l.startDate, {
     message: "endDate must be on or after startDate",
     path: ["endDate"],
+  })
+  .refine((l) => !l.midDate || (l.midDate >= l.startDate && l.midDate <= l.endDate), {
+    message: "midDate must be between startDate and endDate",
+    path: ["midDate"],
   });
 
 const createSchema = z.object({

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { AttachmentType } from "@/lib/attachments";
 import {
   useCampaignOptionsQuery,
   useCampaignQuery,
@@ -31,17 +32,28 @@ const STEPS = ["Campaign", "Location"] as const;
  *
  * Step/selection state resets on mount, not on `open` — the caller should
  * remount this (e.g. via a bumped `key`) each time it opens fresh.
+ *
+ * When opened from a context that already knows the campaign and location
+ * (e.g. a location's own empty gallery), pass `initialCampaignId`/
+ * `initialLocationId` — the campaign step is skipped entirely and the
+ * location/upload step opens already pointed at that location.
  */
 export function AddImagesWizard({
   open,
   onOpenChange,
+  initialCampaignId,
+  initialLocationId,
+  initialType,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialCampaignId?: string;
+  initialLocationId?: string;
+  initialType?: AttachmentType;
 }) {
-  const [step, setStep] = useState(0);
-  const [campaignId, setCampaignId] = useState("");
-  const [locationId, setLocationId] = useState("");
+  const [step, setStep] = useState(initialCampaignId ? 1 : 0);
+  const [campaignId, setCampaignId] = useState(initialCampaignId ?? "");
+  const [locationId, setLocationId] = useState(initialLocationId ?? "");
 
   // A light {id, clientName, locationCount} list for the picker, then the one
   // selected campaign in full. The wizard used to be handed every campaign
@@ -68,6 +80,7 @@ export function AddImagesWizard({
     campaignId,
     locationId: effectiveLocationId,
     onUploaded: () => onOpenChange(false),
+    initialType,
   });
 
   return (

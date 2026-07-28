@@ -35,6 +35,7 @@ export type LocationPayload = {
   type: string;
   vendorId: string;
   startDate: string;
+  midDate: string;
   endDate: string;
   status: string;
 };

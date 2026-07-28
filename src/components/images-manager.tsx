@@ -2,12 +2,19 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ImageIcon, Loader2Icon, PlusIcon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ImageIcon, Loader2Icon, PlusIcon, PresentationIcon } from "lucide-react";
+import type { PhotoFilter, StageFilter } from "@/lib/attachments";
 import { formatDate } from "@/lib/campaign";
+import { apiJson } from "@/lib/http";
+import { queryKeys } from "@/lib/query-keys";
 import { useCampaignQuery } from "@/lib/queries/campaigns";
 import { useImagesQuery } from "@/lib/queries/attachments";
 import { AddImagesWizard } from "@/components/add-images-wizard";
+import { useExportPpt } from "@/components/image-preview/export-ppt";
 import { ImagePreviewDialog } from "@/components/image-preview/dialog";
+import { ExportPptFilterItems } from "@/components/image-preview/photo-type-menu";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -15,13 +22,26 @@ import {
   sortParams,
   useTableState,
 } from "@/components/ui/data-table";
-import type { CampaignImagesRowView } from "@/lib/view-types";
+import {
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu";
+import { RowActions } from "@/components/ui/row-actions";
+import type { CampaignImagesRowView, CampaignView } from "@/lib/view-types";
 
 export function ImagesManager() {
   const [wizardOpen, setWizardOpen] = useState(false);
   // Bumped every time the wizard opens so it remounts with fresh step/
   // selection state instead of resuming wherever it was left last time.
   const [wizardKey, setWizardKey] = useState(0);
+  // Set when the wizard is opened from a known campaign/location (e.g. a
+  // location's own empty gallery) so it can skip straight past the campaign
+  // picker instead of making the user re-find what they were just looking at.
+  const [wizardSeed, setWizardSeed] = useState<{
+    campaignId: string;
+    locationId: string;
+  } | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState<CampaignImagesRowView | null>(null);
@@ -37,8 +57,13 @@ export function ImagesManager() {
     ...sortParams(table.sorting),
   });
 
-  function openWizard() {
+  const queryClient = useQueryClient();
+  const pptExport = useExportPpt();
+  const [exportingRowId, setExportingRowId] = useState<string | null>(null);
+
+  function openWizard(seed?: { campaignId: string; locationId: string }) {
     setWizardKey((k) => k + 1);
+    setWizardSeed(seed ?? null);
     setWizardOpen(true);
   }
 
@@ -48,6 +73,43 @@ export function ImagesManager() {
     setPreviewLocationId(locationId ?? null);
     setPreviewOpen(true);
   }
+
+  /** Jumps from the preview dialog straight into the add-images wizard,
+   * already pointed at the location the user was just looking at. */
+  function addImagesTo(campaignId: string, locationId: string) {
+    setPreviewOpen(false);
+    openWizard({ campaignId, locationId });
+  }
+
+  /**
+   * Exports every location in the campaign as one deck. The row only carries
+   * the campaign-level rollup, so the full detail (every location's
+   * attachments) is fetched on demand — through the query cache, so this is
+   * free if the row was already expanded.
+   */
+  const exportCampaignPpt = useCallback(
+    async (row: CampaignImagesRowView, stage: StageFilter, filter: PhotoFilter) => {
+      setExportingRowId(row.id);
+      try {
+        const campaign = await queryClient.fetchQuery({
+          queryKey: queryKeys.campaigns.detail(row.id),
+          queryFn: () => apiJson<CampaignView>(`/api/campaigns/${row.id}`),
+        });
+        await pptExport.exportPpt(
+          row.clientName,
+          campaign.locations,
+          stage,
+          filter,
+          `${row.clientName} - Execution`,
+        );
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not load campaign");
+      } finally {
+        setExportingRowId(null);
+      }
+    },
+    [queryClient, pptExport],
+  );
 
   const columns = useMemo<ColumnDef<CampaignImagesRowView>[]>(
     () => [
@@ -77,8 +139,39 @@ export function ImagesManager() {
           </span>
         ),
       },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        meta: { className: "w-0 text-right" },
+        cell: ({ row }) => {
+          const busy = exportingRowId === row.original.id;
+          return (
+            <RowActions>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  {busy ? (
+                    <Loader2Icon className="animate-spin" />
+                  ) : (
+                    <PresentationIcon />
+                  )}
+                  Export PPT
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <ExportPptFilterItems
+                    disabled={busy}
+                    onPick={(stage, filter) =>
+                      exportCampaignPpt(row.original, stage, filter)
+                    }
+                  />
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </RowActions>
+          );
+        },
+      },
     ],
-    [],
+    [exportingRowId, exportCampaignPpt],
   );
 
   const renderLocations = useCallback(
@@ -100,7 +193,7 @@ export function ImagesManager() {
             Every photo and creative deck uploaded across your campaigns.
           </p>
         </div>
-        <Button onClick={openWizard}>
+        <Button onClick={() => openWizard()}>
           <PlusIcon />
           Add images
         </Button>
@@ -128,7 +221,7 @@ export function ImagesManager() {
                 <p className="text-sm text-muted-foreground">
                   No images or documents yet.
                 </p>
-                <Button onClick={openWizard}>
+                <Button onClick={() => openWizard()}>
                   <PlusIcon />
                   Add images
                 </Button>
@@ -144,6 +237,8 @@ export function ImagesManager() {
         key={wizardKey}
         open={wizardOpen}
         onOpenChange={setWizardOpen}
+        initialCampaignId={wizardSeed?.campaignId}
+        initialLocationId={wizardSeed?.locationId}
       />
 
       <ImagePreviewDialog
@@ -151,6 +246,7 @@ export function ImagesManager() {
         locationId={previewLocationId}
         open={previewOpen}
         onOpenChange={setPreviewOpen}
+        onAddImages={addImagesTo}
       />
     </div>
   );

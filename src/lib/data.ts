@@ -147,6 +147,7 @@ type LeanLocation = {
   status: string;
   vendorId: unknown;
   startDate: Date;
+  midDate?: Date | null;
   endDate: Date;
   reminderDate: Date;
   reminderSent: boolean;
@@ -167,6 +168,7 @@ function locationFrom(
     status: l.status,
     vendor: vendorById.get(String(l.vendorId)) ?? { id: "", name: "—" },
     startDate: new Date(l.startDate).toISOString(),
+    midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
     endDate: new Date(l.endDate).toISOString(),
     reminder: {
       date: new Date(l.reminderDate).toISOString(),
@@ -505,6 +507,7 @@ export async function getCampaign(
         status: l.status,
         vendor: personFrom(l.vendorId as LeanRef),
         startDate: new Date(l.startDate).toISOString(),
+        midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
         endDate: new Date(l.endDate).toISOString(),
         reminder: {
           date: new Date(l.reminderDate).toISOString(),

@@ -30,6 +30,7 @@ export type LocationView = {
   status: string;
   vendor: PersonView;
   startDate: string; // ISO
+  midDate: string | null; // ISO, optional
   endDate: string; // ISO
   reminder: { date: string; sent: boolean; sentAt: string | null };
   attachments: AttachmentView[];

@@ -8,6 +8,9 @@ export const campaignLocationSchema = new Schema({
   vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true },
 
   startDate: { type: Date, required: true },
+  // Optional — not every location has a mid-campaign checkpoint, and existing
+  // documents predate this field entirely.
+  midDate: { type: Date, default: null },
   endDate: { type: Date, required: true },
   days: { type: Number, required: true },
   status: { type: String, enum: ["LIVE", "ENDED", "PENDING_CREATIVE"], default: "LIVE" },

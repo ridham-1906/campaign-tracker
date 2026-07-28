@@ -56,6 +56,7 @@ export type LocationDraft = {
   type: string;
   vendorId: string;
   startDate: string;
+  midDate: string;
   endDate: string;
   status: string;
 };
@@ -73,6 +74,7 @@ export function emptyLocation(): LocationDraft {
     type: "",
     vendorId: "",
     startDate: "",
+    midDate: "",
     endDate: "",
     status: "LIVE",
   };
@@ -160,7 +162,12 @@ export function CampaignForm({
       locations: draft.locations.map((l, i) =>
         i === 0
           ? l
-          : { ...l, startDate: first.startDate, endDate: first.endDate },
+          : {
+              ...l,
+              startDate: first.startDate,
+              midDate: first.midDate,
+              endDate: first.endDate,
+            },
       ),
     });
   }
@@ -203,7 +210,10 @@ export function CampaignForm({
   }, [currentStep, draft]);
 
   const datesOutOfOrder = draft.locations.some(
-    (l) => l.startDate && l.endDate && l.endDate < l.startDate,
+    (l) =>
+      (l.startDate && l.endDate && l.endDate < l.startDate) ||
+      (l.midDate && l.startDate && l.midDate < l.startDate) ||
+      (l.midDate && l.endDate && l.midDate > l.endDate),
   );
 
   const filtersActive = Boolean(
@@ -552,13 +562,22 @@ export function CampaignForm({
                     </span>
                   )}
                 </p>
-                <div className="grid gap-3 sm:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   <Field label="Start date">
                     <Input
                       type="date"
                       value={l.startDate}
                       onChange={(e) =>
                         setLocation(i, { startDate: e.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Mid date">
+                    <Input
+                      type="date"
+                      value={l.midDate}
+                      onChange={(e) =>
+                        setLocation(i, { midDate: e.target.value })
                       }
                     />
                   </Field>

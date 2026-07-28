@@ -78,13 +78,17 @@ export function useLocationUpload({
   campaignId,
   locationId,
   onUploaded,
+  initialType,
 }: {
   campaignId: string;
   locationId: string;
   /** Fired after a fully successful batch so the host can close itself. */
   onUploaded?: () => void;
+  /** Defaults the type picker — set when the host already knows what's
+   * being added (e.g. opened from a specific location's empty gallery). */
+  initialType?: UploadType;
 }) {
-  const [type, setType] = useState<UploadType>("installation");
+  const [type, setType] = useState<UploadType>(initialType ?? "installation");
   const [photoType, setPhotoType] = useState<PhotoType>("newspaper");
   const [picked, setPicked] = useState<Picked[]>([]);
 

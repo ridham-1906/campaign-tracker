@@ -18,6 +18,27 @@ export const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
   gps: "GPS",
 };
 
+/** A photo-type filter, as offered by the PPT export picker — "all" is the
+ * plain photo types plus one more option that matches any tagged photo. */
+export const PHOTO_FILTERS = ["all", ...PHOTO_TYPES] as const;
+export type PhotoFilter = (typeof PHOTO_FILTERS)[number];
+
+export const PHOTO_FILTER_LABELS: Record<PhotoFilter, string> = {
+  all: "All",
+  ...PHOTO_TYPE_LABELS,
+};
+
+/** Whether an attachment matches a photo-type filter — "all" matches every
+ * image regardless of whether it's been tagged with a photo type;
+ * documents never match, and a specific filter only matches that exact tag. */
+export function matchesPhotoFilter(
+  attachment: { kind: AttachmentKind; photoType: PhotoType | null },
+  filter: PhotoFilter,
+): boolean {
+  if (attachment.kind !== "image") return false;
+  return filter === "all" || attachment.photoType === filter;
+}
+
 export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export const DOCUMENT_MIME_TYPES = [
   "application/vnd.ms-powerpoint", // .ppt
@@ -35,6 +56,26 @@ export const STAGE_LABELS: Record<AttachmentStage, string> = {
   mid_date: "Mid date",
   end_date: "End date",
 };
+
+/** A stage filter, as offered by the PPT export picker — "all" is the three
+ * install stages plus one more option that matches any of them. */
+export const STAGE_FILTERS = ["all", ...ATTACHMENT_STAGES] as const;
+export type StageFilter = (typeof STAGE_FILTERS)[number];
+
+export const STAGE_FILTER_LABELS: Record<StageFilter, string> = {
+  all: "All stages",
+  ...STAGE_LABELS,
+};
+
+/** Whether an attachment matches a stage filter — "all" matches any image
+ * regardless of its stage (or lack of one); documents never match. */
+export function matchesStageFilter(
+  attachment: { kind: AttachmentKind; stage: AttachmentStage | null },
+  filter: StageFilter,
+): boolean {
+  if (attachment.kind !== "image") return false;
+  return filter === "all" || attachment.stage === filter;
+}
 
 /** How attachments are bucketed for browsing: the three photo stages, plus decks. */
 export type AttachmentType = AttachmentStage | "document";

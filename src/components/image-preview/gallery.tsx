@@ -5,8 +5,10 @@ import { toast } from "sonner";
 import {
   ChevronLeftIcon,
   DownloadIcon,
+  ImagePlusIcon,
   Loader2Icon,
   PencilIcon,
+  PresentationIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
@@ -27,6 +29,8 @@ import { useDeleteAttachments, useUpdateAttachment } from "@/lib/queries/attachm
 import { CheckMark } from "@/components/image-preview/check-mark";
 import { DocumentList } from "@/components/image-preview/document-list";
 import { useAttachmentDownload } from "@/components/image-preview/download";
+import { useExportPpt } from "@/components/image-preview/export-ppt";
+import { ExportPptButton } from "@/components/image-preview/photo-type-menu";
 import { ScopeMenu, type Scope } from "@/components/image-preview/scope-menu";
 import { Stage } from "@/components/image-preview/stage";
 import type { ConfirmOptions } from "@/components/use-confirm";
@@ -50,6 +54,7 @@ export function LocationGallery({
   location,
   confirm,
   onBack,
+  onAddImages,
 }: {
   clientName: string;
   campaignId: string;
@@ -57,10 +62,13 @@ export function LocationGallery({
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   /** Omitted when the campaign has a single location — nothing to go back to. */
   onBack?: () => void;
+  /** Opens the add-images wizard already pointed at this location. */
+  onAddImages?: () => void;
 }) {
   const deleteAttachments = useDeleteAttachments();
   const updateAttachment = useUpdateAttachment();
   const zip = useAttachmentDownload();
+  const pptExport = useExportPpt();
 
   const counts = useMemo(
     () => countByType(location.attachments),
@@ -273,6 +281,12 @@ export function LocationGallery({
         {/* Two controls, each asking the same question — what should this
             apply to? — so there is nothing to weigh up before clicking. */}
         <div className="ml-auto flex items-center gap-2">
+          {onAddImages && (
+            <Button type="button" variant="outline" size="sm" onClick={onAddImages}>
+              <ImagePlusIcon />
+              Add images
+            </Button>
+          )}
           {!isDocument && (
             <Button
               type="button"
@@ -303,6 +317,30 @@ export function LocationGallery({
               zip.download(
                 resolve(scope).list,
                 `${clientName} - ${locationLabel} - ${TYPE_LABELS[type]}`,
+              )
+            }
+          />
+          <ExportPptButton
+            label={
+              pptExport.exporting
+                ? `Building ${pptExport.progress.done}/${pptExport.progress.total}`
+                : "Export PPT"
+            }
+            icon={
+              pptExport.exporting ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                <PresentationIcon />
+              )
+            }
+            disabled={pptExport.exporting || busy}
+            onPick={(stage, filter) =>
+              pptExport.exportPpt(
+                clientName,
+                [location],
+                stage,
+                filter,
+                `${clientName} - ${locationLabel} - Execution`,
               )
             }
           />
@@ -393,9 +431,17 @@ export function LocationGallery({
 
       <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
         {items.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
-            Nothing uploaded to {TYPE_LABELS[type]} for this location yet.
-          </p>
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-16 text-center">
+            <p className="text-sm text-muted-foreground">
+              Nothing uploaded to {TYPE_LABELS[type]} for this location yet.
+            </p>
+            {onAddImages && (
+              <Button type="button" size="sm" onClick={onAddImages}>
+                <ImagePlusIcon />
+                Add images
+              </Button>
+            )}
+          </div>
         ) : isDocument ? (
           <DocumentList
             items={items}

@@ -29,6 +29,7 @@ export function ImagePreviewDialog({
   locationId,
   open,
   onOpenChange,
+  onAddImages,
 }: {
   /** The clicked row; null while the dialog has never been opened. */
   row: CampaignImagesRowView | null;
@@ -36,6 +37,9 @@ export function ImagePreviewDialog({
   locationId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opens the add-images wizard pre-pointed at the given campaign/location —
+   * the caller is expected to close this dialog itself. */
+  onAddImages: (campaignId: string, locationId: string) => void;
 }) {
   const { confirm, confirmDialog } = useConfirm();
   const [picked, setPicked] = useState<string | null>(null);
@@ -99,6 +103,7 @@ export function ImagePreviewDialog({
               location={location}
               confirm={confirm}
               onBack={only ? undefined : () => setPicked(null)}
+              onAddImages={() => onAddImages(campaignId, location.id)}
             />
           ) : (
             <LocationStep locations={locations} onSelect={setPicked} />
