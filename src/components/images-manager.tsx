@@ -120,7 +120,6 @@ export function ImagesManager() {
             onSearchChange={table.setSearch}
             isLoading={query.isLoading}
             isFetching={query.isFetching}
-            onRowClick={openPreview}
             renderExpanded={renderLocations}
             searchPlaceholder="Search client, location, city…"
             empty={
