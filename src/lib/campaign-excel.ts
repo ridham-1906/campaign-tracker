@@ -20,6 +20,8 @@ const HEADER_ALIASES = {
   type: ["type", "media type"],
   location: ["location", "area", "site", "site location"],
   startDate: ["start date", "start", "from date", "from"],
+  // Optional — several sheets don't have this column at all.
+  midDate: ["mid date", "middate", "mid"],
   endDate: ["end date", "end", "enddate", "to date", "to"],
 } as const;
 
@@ -170,6 +172,7 @@ function emptyImportLocation(): LocationDraft {
     type: "",
     vendorId: "",
     startDate: "",
+    midDate: "",
     endDate: "",
     status: "LIVE",
   };
@@ -233,6 +236,7 @@ export async function parseCampaignExcel(
     const excelRow = selected!.header.index + rowIndex + 2;
     const vendorName = text(getCell(row, selected!.header.columns, "vendor"));
     const startDate = parseDate(getCell(row, selected!.header.columns, "startDate"));
+    const midDate = parseDate(getCell(row, selected!.header.columns, "midDate"));
     const endDate = parseDate(getCell(row, selected!.header.columns, "endDate"));
     const vendorId = vendorByName.get(normalize(vendorName)) ?? "";
 
@@ -243,6 +247,7 @@ export async function parseCampaignExcel(
       type: text(getCell(row, selected!.header.columns, "type")),
       vendorId,
       startDate,
+      midDate,
       endDate,
       status: normalizeStatus(getCell(row, selected!.header.columns, "status")),
     };

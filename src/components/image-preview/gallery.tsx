@@ -5,21 +5,32 @@ import { toast } from "sonner";
 import {
   ChevronLeftIcon,
   DownloadIcon,
+  ImagePlusIcon,
   Loader2Icon,
+  PencilIcon,
+  PresentationIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
+  ATTACHMENT_STAGES,
   ATTACHMENT_TYPES,
+  PHOTO_TYPES,
+  PHOTO_TYPE_LABELS,
+  STAGE_LABELS,
   TYPE_LABELS,
   attachmentTypeOf,
   countByType,
+  type AttachmentStage,
   type AttachmentType,
+  type PhotoType,
 } from "@/lib/attachments";
 import { cn } from "@/lib/utils";
-import { useDeleteAttachments } from "@/lib/queries/attachments";
+import { useDeleteAttachments, useUpdateAttachment } from "@/lib/queries/attachments";
 import { CheckMark } from "@/components/image-preview/check-mark";
 import { DocumentList } from "@/components/image-preview/document-list";
 import { useAttachmentDownload } from "@/components/image-preview/download";
+import { useExportPpt } from "@/components/image-preview/export-ppt";
+import { ExportPptButton } from "@/components/image-preview/photo-type-menu";
 import { ScopeMenu, type Scope } from "@/components/image-preview/scope-menu";
 import { Stage } from "@/components/image-preview/stage";
 import type { ConfirmOptions } from "@/components/use-confirm";
@@ -43,6 +54,7 @@ export function LocationGallery({
   location,
   confirm,
   onBack,
+  onAddImages,
 }: {
   clientName: string;
   campaignId: string;
@@ -50,9 +62,13 @@ export function LocationGallery({
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   /** Omitted when the campaign has a single location — nothing to go back to. */
   onBack?: () => void;
+  /** Opens the add-images wizard already pointed at this location. */
+  onAddImages?: () => void;
 }) {
   const deleteAttachments = useDeleteAttachments();
+  const updateAttachment = useUpdateAttachment();
   const zip = useAttachmentDownload();
+  const pptExport = useExportPpt();
 
   const counts = useMemo(
     () => countByType(location.attachments),
@@ -80,6 +96,38 @@ export function LocationGallery({
   const isDocument = type === "document";
   const current = isDocument ? undefined : items[safeIndex];
 
+  // Reclassifying the current image — its own small form rather than a
+  // dialog, since there's already one file on screen to apply it to.
+  const [editing, setEditing] = useState(false);
+  const [editStage, setEditStage] = useState<AttachmentStage>("installation");
+  const [editPhotoType, setEditPhotoType] = useState<PhotoType>("newspaper");
+
+  function startEdit() {
+    if (!current) return;
+    setEditStage((current.stage as AttachmentStage | null) ?? "installation");
+    setEditPhotoType((current.photoType as PhotoType | null) ?? "newspaper");
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    if (!current) return;
+    updateAttachment.mutate(
+      {
+        campaignId,
+        locationId: location.id,
+        attachmentId: current.id,
+        stage: editStage,
+        photoType: editPhotoType,
+      },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          toast.success("Attachment updated");
+        },
+      },
+    );
+  }
+
   const step = useCallback(
     (delta: 1 | -1) => {
       setIndex((i) => {
@@ -92,6 +140,8 @@ export function LocationGallery({
         return next;
       });
       setDirection(delta);
+      // The edit form targets whatever is current — moving on invalidates it.
+      setEditing(false);
     },
     [items.length],
   );
@@ -111,6 +161,7 @@ export function LocationGallery({
     setType(next);
     setIndex(0);
     setSelected(new Set());
+    setEditing(false);
   }
 
   function toggle(id: string) {
@@ -161,6 +212,9 @@ export function LocationGallery({
       confirmLabel: `Delete ${list.length === 1 ? "file" : `${list.length} files`}`,
     });
     if (!ok) return;
+
+    // Whatever this scope covers may include the file the edit form targets.
+    setEditing(false);
 
     deleteAttachments.mutate(
       {
@@ -227,6 +281,24 @@ export function LocationGallery({
         {/* Two controls, each asking the same question — what should this
             apply to? — so there is nothing to weigh up before clicking. */}
         <div className="ml-auto flex items-center gap-2">
+          {onAddImages && (
+            <Button type="button" variant="outline" size="sm" onClick={onAddImages}>
+              <ImagePlusIcon />
+              Add images
+            </Button>
+          )}
+          {!isDocument && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!current || busy || editing}
+              onClick={startEdit}
+            >
+              <PencilIcon />
+              Edit
+            </Button>
+          )}
           <ScopeMenu
             label={zip.zipping ? `Zipping ${zip.done}/${zip.total}` : "Download"}
             icon={
@@ -248,6 +320,30 @@ export function LocationGallery({
               )
             }
           />
+          <ExportPptButton
+            label={
+              pptExport.exporting
+                ? `Building ${pptExport.progress.done}/${pptExport.progress.total}`
+                : "Export PPT"
+            }
+            icon={
+              pptExport.exporting ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                <PresentationIcon />
+              )
+            }
+            disabled={pptExport.exporting || busy}
+            onPick={(stage, filter) =>
+              pptExport.exportPpt(
+                clientName,
+                [location],
+                stage,
+                filter,
+                `${clientName} - ${locationLabel} - Execution`,
+              )
+            }
+          />
           <ScopeMenu
             label="Delete"
             icon={busy ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
@@ -264,11 +360,88 @@ export function LocationGallery({
         </div>
       </div>
 
+      {editing && current && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2.5">
+          <Select
+            value={editStage}
+            disabled={updateAttachment.isPending}
+            onValueChange={(v) =>
+              setEditStage((v as AttachmentStage) ?? "installation")
+            }
+          >
+            <SelectTrigger size="sm" aria-label="Stage" className="w-40">
+              <SelectValue>
+                {(v: AttachmentStage | null) => STAGE_LABELS[v ?? "installation"]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {ATTACHMENT_STAGES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {STAGE_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={editPhotoType}
+            disabled={updateAttachment.isPending}
+            onValueChange={(v) =>
+              setEditPhotoType((v as PhotoType) ?? "newspaper")
+            }
+          >
+            <SelectTrigger size="sm" aria-label="Photo type" className="w-40">
+              <SelectValue>
+                {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {PHOTO_TYPES.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {PHOTO_TYPE_LABELS[p]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="ml-auto flex gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={updateAttachment.isPending}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={updateAttachment.isPending}
+              onClick={saveEdit}
+            >
+              {updateAttachment.isPending && (
+                <Loader2Icon className="animate-spin" />
+              )}
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto thin-scrollbar">
         {items.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
-            Nothing uploaded to {TYPE_LABELS[type]} for this location yet.
-          </p>
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-16 text-center">
+            <p className="text-sm text-muted-foreground">
+              Nothing uploaded to {TYPE_LABELS[type]} for this location yet.
+            </p>
+            {onAddImages && (
+              <Button type="button" size="sm" onClick={onAddImages}>
+                <ImagePlusIcon />
+                Add images
+              </Button>
+            )}
+          </div>
         ) : isDocument ? (
           <DocumentList
             items={items}

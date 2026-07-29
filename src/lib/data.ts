@@ -113,6 +113,7 @@ type LeanAttachment = {
   _id: unknown;
   kind: string;
   stage?: string | null;
+  photoType?: string | null;
   filename: string;
   mimeType: string;
   size: number;
@@ -128,6 +129,7 @@ export function attachmentViewFrom(
     id: String(a._id),
     kind: a.kind as AttachmentView["kind"],
     stage: (a.stage ?? null) as AttachmentView["stage"],
+    photoType: (a.photoType ?? null) as AttachmentView["photoType"],
     filename: a.filename,
     mimeType: a.mimeType,
     size: a.size,
@@ -145,6 +147,7 @@ type LeanLocation = {
   status: string;
   vendorId: unknown;
   startDate: Date;
+  midDate?: Date | null;
   endDate: Date;
   reminderDate: Date;
   reminderSent: boolean;
@@ -165,6 +168,7 @@ function locationFrom(
     status: l.status,
     vendor: vendorById.get(String(l.vendorId)) ?? { id: "", name: "—" },
     startDate: new Date(l.startDate).toISOString(),
+    midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
     endDate: new Date(l.endDate).toISOString(),
     reminder: {
       date: new Date(l.reminderDate).toISOString(),
@@ -503,6 +507,7 @@ export async function getCampaign(
         status: l.status,
         vendor: personFrom(l.vendorId as LeanRef),
         startDate: new Date(l.startDate).toISOString(),
+        midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
         endDate: new Date(l.endDate).toISOString(),
         reminder: {
           date: new Date(l.reminderDate).toISOString(),

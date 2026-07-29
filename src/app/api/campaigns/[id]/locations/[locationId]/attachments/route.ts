@@ -4,6 +4,7 @@ import { getBucketId, getStorage } from "@/lib/appwrite";
 import {
   ATTACHMENT_KINDS,
   ATTACHMENT_STAGES,
+  PHOTO_TYPES,
   validateAttachmentFile,
 } from "@/lib/attachments";
 import { deleteAttachmentsFor, findOwnedLocation, isValidId } from "@/lib/services";
@@ -20,10 +21,15 @@ const fieldsSchema = z
   .object({
     kind: z.enum(ATTACHMENT_KINDS),
     stage: z.enum(ATTACHMENT_STAGES).optional(),
+    photoType: z.enum(PHOTO_TYPES).optional(),
   })
   .refine((d) => d.kind !== "image" || Boolean(d.stage), {
     message: "stage is required for image attachments",
     path: ["stage"],
+  })
+  .refine((d) => d.kind !== "image" || Boolean(d.photoType), {
+    message: "photoType is required for image attachments",
+    path: ["photoType"],
   });
 
 /** Omit `ids` to clear every attachment on the location. */
@@ -57,6 +63,7 @@ export async function POST(req: Request, { params }: Params) {
   const parsed = fieldsSchema.safeParse({
     kind: formData.get("kind"),
     stage: formData.get("stage") ?? undefined,
+    photoType: formData.get("photoType") ?? undefined,
   });
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
@@ -86,6 +93,7 @@ export async function POST(req: Request, { params }: Params) {
       locationId: found.location._id,
       kind: parsed.data.kind,
       stage: parsed.data.kind === "image" ? parsed.data.stage : null,
+      photoType: parsed.data.kind === "image" ? parsed.data.photoType : null,
       fileId: uploaded.$id,
       filename: file.name,
       mimeType: file.type,

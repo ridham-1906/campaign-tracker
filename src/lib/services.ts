@@ -23,6 +23,7 @@ export type LocationInput = {
   type: string;
   vendorId: string;
   startDate: Date;
+  midDate?: Date;
   endDate: Date;
   status?: CampaignStatus;
 };
@@ -101,12 +102,14 @@ export async function deleteAttachmentsFor(scope: {
 function buildLocation(input: LocationInput) {
   const start = startOfDay(input.startDate);
   const end = startOfDay(input.endDate);
+  const mid = input.midDate ? startOfDay(input.midDate) : null;
   return {
     city: input.city,
     location: input.location,
     type: input.type,
     vendorId: input.vendorId,
     startDate: start,
+    midDate: mid,
     endDate: end,
     days: durationDays(start, end),
     status: input.status ?? "LIVE",
