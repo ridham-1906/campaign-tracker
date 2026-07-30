@@ -10,21 +10,21 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUploadAttachments } from "@/lib/queries/attachments";
+import { useImageTypeOptions } from "@/lib/queries/image-types";
 import {
-  ATTACHMENT_STAGES,
   DOCUMENT_ACCEPT,
   IMAGE_ACCEPT,
   MAX_DOCUMENT_BYTES,
   MAX_IMAGE_BYTES,
   PHOTO_TYPES,
   PHOTO_TYPE_LABELS,
-  STAGE_LABELS,
   formatAttachmentSize,
   validateAttachmentFile,
   type AttachmentKind,
   type AttachmentStage,
   type PhotoType,
 } from "@/lib/attachments";
+import { ImageTypePicker } from "@/components/image-type-picker";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -38,19 +38,6 @@ import type { AttachmentView } from "@/lib/view-types";
 
 /** The wire shape, shared with the server via lib/view-types.ts. */
 export type AttachmentRow = AttachmentView;
-
-/** The three photo stages plus the document bucket, flattened into one list so
- * picking a target is a single choice instead of "kind, then stage". */
-type UploadType = AttachmentStage | "document";
-
-const TYPE_OPTIONS: { value: UploadType; label: string }[] = [
-  ...ATTACHMENT_STAGES.map((s) => ({ value: s as UploadType, label: STAGE_LABELS[s] })),
-  { value: "document", label: "Creative deck" },
-];
-
-const TYPE_LABELS = Object.fromEntries(
-  TYPE_OPTIONS.map((o) => [o.value, o.label]),
-) as Record<UploadType, string>;
 
 const PHOTO_TYPE_OPTIONS: { value: PhotoType; label: string }[] = PHOTO_TYPES.map(
   (p) => ({ value: p, label: PHOTO_TYPE_LABELS[p] }),
@@ -86,17 +73,31 @@ export function useLocationUpload({
   onUploaded?: () => void;
   /** Defaults the type picker — set when the host already knows what's
    * being added (e.g. opened from a specific location's empty gallery). */
-  initialType?: UploadType;
+  initialType?: AttachmentStage | "document";
 }) {
-  const [type, setType] = useState<UploadType>(initialType ?? "installation");
+  const { data: imageTypes = [] } = useImageTypeOptions();
+  const [kind, setKind] = useState<AttachmentKind>(
+    initialType === "document" ? "document" : "image",
+  );
+  const [imageType, setImageType] = useState("");
   const [photoType, setPhotoType] = useState<PhotoType>("newspaper");
   const [picked, setPicked] = useState<Picked[]>([]);
 
   const uploadAttachments = useUploadAttachments();
   const busy = uploadAttachments.isPending;
 
-  const isDocument = type === "document";
-  const kind: AttachmentKind = isDocument ? "document" : "image";
+  const isDocument = kind === "document";
+
+  // The picker's default comes from the DB, unlike the old fixed 3-value
+  // enum, so it can't be known synchronously — resolved to the matching
+  // option's id the moment the list loads, adjusted during render (per
+  // https://react.dev/learn/you-might-not-need-an-effect) rather than an
+  // effect, so it lands in the same commit instead of a cascading re-render.
+  if (!imageType && imageTypes.length > 0) {
+    const wantRole = initialType && initialType !== "document" ? initialType : "installation";
+    const match = imageTypes.find((t) => t.role === wantRole) ?? imageTypes[0];
+    if (match) setImageType(match.id);
+  }
 
   /**
    * Preview URLs are created when a file is picked and revoked when it leaves
@@ -159,11 +160,18 @@ export function useLocationUpload({
     setPicked([]);
   }
 
-  function changeType(next: UploadType) {
+  function changeKind(next: AttachmentKind) {
+    // Queued files belong to the kind they were picked for.
+    release(picked);
+    setPicked([]);
+    setKind(next);
+  }
+
+  function changeType(next: string) {
     // Queued files belong to the type they were picked for.
     release(picked);
     setPicked([]);
-    setType(next);
+    setImageType(next);
   }
 
   function changePhotoType(next: PhotoType) {
@@ -181,7 +189,7 @@ export function useLocationUpload({
         campaignId,
         locationId,
         kind,
-        stage: isDocument ? undefined : type,
+        imageTypeId: isDocument ? undefined : imageType,
         photoType: isDocument ? undefined : photoType,
         files: picked.map((p) => p.file),
       },
@@ -207,11 +215,12 @@ export function useLocationUpload({
   }
 
   return {
-    type,
+    kind,
+    changeKind,
+    imageType,
     changeType,
     photoType,
     changePhotoType,
-    kind,
     isDocument,
     picked,
     addFiles,
@@ -240,32 +249,43 @@ export function LocationAttachmentsEditor({
     <div className="space-y-4">
       <div className="space-y-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <Label className="text-xs">Type of image</Label>
+          <Label className="text-xs">Upload type</Label>
           <span className="truncate text-xs text-muted-foreground">
             {locationLabel}
           </span>
         </div>
-        <div className={cn("grid gap-2", upload.isDocument ? "grid-cols-1" : "grid-cols-2")}>
-          <Select
-            value={upload.type}
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant={upload.isDocument ? "outline" : "default"}
+            size="sm"
             disabled={upload.busy}
-            onValueChange={(v) => upload.changeType((v as UploadType) ?? "installation")}
+            onClick={() => upload.changeKind("image")}
           >
-            <SelectTrigger className="w-full">
-              <SelectValue>
-                {(v: UploadType | null) => TYPE_LABELS[v ?? "installation"]}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {TYPE_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            Photo
+          </Button>
+          <Button
+            type="button"
+            variant={upload.isDocument ? "default" : "outline"}
+            size="sm"
+            disabled={upload.busy}
+            onClick={() => upload.changeKind("document")}
+          >
+            Creative deck
+          </Button>
+        </div>
+      </div>
 
-          {!upload.isDocument && (
+      {!upload.isDocument && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Type of image</Label>
+          <div className="grid grid-cols-2 items-start gap-2">
+            <ImageTypePicker
+              value={upload.imageType}
+              onChange={upload.changeType}
+              disabled={upload.busy}
+            />
+
             <Select
               value={upload.photoType}
               disabled={upload.busy}
@@ -286,9 +306,9 @@ export function LocationAttachmentsEditor({
                 ))}
               </SelectContent>
             </Select>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <DropZone kind={upload.kind} disabled={upload.busy} onFiles={upload.addFiles} />
 

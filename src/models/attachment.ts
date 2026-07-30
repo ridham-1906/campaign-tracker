@@ -25,7 +25,14 @@ export const attachmentSchema = new Schema({
   locationId: { type: Schema.Types.ObjectId, required: true },
 
   kind: { type: String, enum: ATTACHMENT_KINDS, required: true },
+  // `stage` is derived from imageTypeId's role at write time (installation/
+  // mid_date/end_date for the three canonical types, null for a custom one)
+  // and kept as its own field so stage-dependent logic (browsing buckets, the
+  // PPT export's Start/Mid/End Date labeling) doesn't need to join through
+  // ImageType on every read.
   stage: { type: String, enum: ATTACHMENT_STAGES, default: null },
+  // The user-managed type this photo was tagged with — see models/image-type.ts.
+  imageTypeId: { type: Schema.Types.ObjectId, ref: "ImageType", default: null },
   // Set for images only, alongside `stage` — what the photo actually shows.
   photoType: { type: String, enum: PHOTO_TYPES, default: null },
   fileId: { type: String, required: true },

@@ -2,8 +2,8 @@ import { z } from "zod";
 import { getBucketId, getStorage } from "@/lib/appwrite";
 import { isValidId } from "@/lib/services";
 import { connectDB } from "@/lib/db";
-import { Attachment } from "@/models";
-import { ATTACHMENT_STAGES, PHOTO_TYPES } from "@/lib/attachments";
+import { Attachment, ImageType } from "@/models";
+import { PHOTO_TYPES } from "@/lib/attachments";
 import { attachmentViewFrom } from "@/lib/data";
 import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
 
@@ -16,11 +16,11 @@ type Params = {
 
 const patchSchema = z
   .object({
-    stage: z.enum(ATTACHMENT_STAGES).optional(),
+    imageTypeId: z.string().refine(isValidId, "Invalid image type").optional(),
     photoType: z.enum(PHOTO_TYPES).optional(),
   })
-  .refine((d) => d.stage !== undefined || d.photoType !== undefined, {
-    message: "Provide stage and/or photoType to update",
+  .refine((d) => d.imageTypeId !== undefined || d.photoType !== undefined, {
+    message: "Provide imageTypeId and/or photoType to update",
   });
 
 /**
@@ -106,13 +106,33 @@ export async function PATCH(req: Request, { params }: Params) {
     return badRequest("Validation failed", fields.error.issues);
   }
 
-  if (fields.data.stage !== undefined) attachment.stage = fields.data.stage;
+  let imageType: InstanceType<typeof ImageType> | null = null;
+  if (fields.data.imageTypeId !== undefined) {
+    imageType = await ImageType.findOne({
+      _id: fields.data.imageTypeId,
+      userId: auth.session.userId,
+    });
+    if (!imageType) return badRequest("Invalid image type");
+    attachment.stage = imageType.role ?? null;
+    attachment.imageTypeId = imageType._id;
+  }
   if (fields.data.photoType !== undefined) {
     attachment.photoType = fields.data.photoType;
   }
   await attachment.save();
 
-  return ok(attachmentViewFrom(attachment, id, locationId));
+  // A photoType-only patch doesn't touch imageTypeId, but the response should
+  // still reflect whatever image type the attachment already had.
+  if (!imageType && attachment.imageTypeId) {
+    imageType = await ImageType.findOne({
+      _id: attachment.imageTypeId,
+      userId: auth.session.userId,
+    });
+  }
+  const imageTypeById = imageType
+    ? new Map([[String(imageType._id), imageType.name]])
+    : undefined;
+  return ok(attachmentViewFrom(attachment, id, locationId, imageTypeById));
 }
 
 /** Remove an attachment. The Mongo metadata is the source of truth for the

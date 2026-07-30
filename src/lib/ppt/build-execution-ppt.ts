@@ -139,21 +139,12 @@ function fitContain(cell: Rect, aspect: number): Rect {
 function buildLocationSlideXml(params: {
   header: string;
   mediaType: string;
-  vendorName: string;
   dateFieldLabel: string;
   dateValueLabel: string;
   photoTypeLabel: string;
   photo: { rId: string; aspect: number };
 }): string {
-  const {
-    header,
-    mediaType,
-    vendorName,
-    dateFieldLabel,
-    dateValueLabel,
-    photoTypeLabel,
-    photo,
-  } = params;
+  const { header, mediaType, dateFieldLabel, dateValueLabel, photoTypeLabel, photo } = params;
   const rect = fitContain(PHOTO_BOX, photo.aspect);
 
   const pic =
@@ -198,14 +189,11 @@ function buildLocationSlideXml(params: {
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"><a:solidFill><a:srgbClr val="FCF7F3"/></a:solidFill></a:rPr><a:t>${escapeXml(header)}</a:t></a:r></a:p></a:txBody>` +
     `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"><a:solidFill><a:schemeClr val="dk1"/></a:solidFill></a:tcPr></a:tc>` +
     `<a:tc hMerge="1"/></a:tr>` +
-    `<a:tr h="371475"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
+    `<a:tr h="371475"><a:tc gridSpan="2"><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>Media Type : </a:t></a:r>` +
     `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(mediaType)}</a:t></a:r></a:p></a:txBody>` +
     `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"/></a:tc>` +
-    `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
-    `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>Vendor : </a:t></a:r>` +
-    `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(vendorName)}</a:t></a:r></a:p></a:txBody>` +
-    `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"/></a:tc></a:tr>` +
+    `<a:tc hMerge="1"/></a:tr>` +
     `<a:tr h="371475"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>${escapeXml(dateFieldLabel)} : </a:t></a:r>` +
     `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(dateValueLabel)}</a:t></a:r></a:p></a:txBody>` +
@@ -235,13 +223,12 @@ function photoTypeLabelOf(photo: AttachmentView): string {
   return photo.photoType ? PHOTO_TYPE_LABELS[photo.photoType] : "Other";
 }
 
-/** Renders a location's header/media/vendor fields the way the table cells
- * expect them, given only what LocationView actually carries. */
+/** Renders a location's header/media fields the way the table cells expect
+ * them, given only what LocationView actually carries. */
 function locationFields(location: LocationView) {
   return {
-    header: `${location.location} · ${location.city}`,
+    header: `${location.city} · ${location.location}`,
     mediaType: location.type,
-    vendorName: location.vendor.name,
   };
 }
 

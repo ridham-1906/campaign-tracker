@@ -12,15 +12,12 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import {
-  ATTACHMENT_STAGES,
   ATTACHMENT_TYPES,
   PHOTO_TYPES,
   PHOTO_TYPE_LABELS,
-  STAGE_LABELS,
   TYPE_LABELS,
   attachmentTypeOf,
   countByType,
-  type AttachmentStage,
   type AttachmentType,
   type PhotoType,
 } from "@/lib/attachments";
@@ -31,6 +28,7 @@ import { DocumentList } from "@/components/image-preview/document-list";
 import { useAttachmentDownload } from "@/components/image-preview/download";
 import { useExportPpt } from "@/components/image-preview/export-ppt";
 import { ExportPptButton } from "@/components/image-preview/photo-type-menu";
+import { ImageTypePicker } from "@/components/image-type-picker";
 import { ScopeMenu, type Scope } from "@/components/image-preview/scope-menu";
 import { Stage } from "@/components/image-preview/stage";
 import type { ConfirmOptions } from "@/components/use-confirm";
@@ -99,12 +97,12 @@ export function LocationGallery({
   // Reclassifying the current image — its own small form rather than a
   // dialog, since there's already one file on screen to apply it to.
   const [editing, setEditing] = useState(false);
-  const [editStage, setEditStage] = useState<AttachmentStage>("installation");
+  const [editImageTypeId, setEditImageTypeId] = useState("");
   const [editPhotoType, setEditPhotoType] = useState<PhotoType>("newspaper");
 
   function startEdit() {
     if (!current) return;
-    setEditStage((current.stage as AttachmentStage | null) ?? "installation");
+    setEditImageTypeId(current.imageType?.id ?? "");
     setEditPhotoType((current.photoType as PhotoType | null) ?? "newspaper");
     setEditing(true);
   }
@@ -116,7 +114,7 @@ export function LocationGallery({
         campaignId,
         locationId: location.id,
         attachmentId: current.id,
-        stage: editStage,
+        imageTypeId: editImageTypeId || undefined,
         photoType: editPhotoType,
       },
       {
@@ -361,50 +359,37 @@ export function LocationGallery({
       </div>
 
       {editing && current && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2.5">
-          <Select
-            value={editStage}
-            disabled={updateAttachment.isPending}
-            onValueChange={(v) =>
-              setEditStage((v as AttachmentStage) ?? "installation")
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Stage" className="w-40">
-              <SelectValue>
-                {(v: AttachmentStage | null) => STAGE_LABELS[v ?? "installation"]}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {ATTACHMENT_STAGES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {STAGE_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex shrink-0 flex-col gap-2 rounded-lg border bg-muted/30 p-2.5">
+          <div className="grid items-start gap-2 sm:grid-cols-2">
+            <ImageTypePicker
+              value={editImageTypeId}
+              onChange={setEditImageTypeId}
+              disabled={updateAttachment.isPending}
+            />
 
-          <Select
-            value={editPhotoType}
-            disabled={updateAttachment.isPending}
-            onValueChange={(v) =>
-              setEditPhotoType((v as PhotoType) ?? "newspaper")
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Photo type" className="w-40">
-              <SelectValue>
-                {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {PHOTO_TYPES.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {PHOTO_TYPE_LABELS[p]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <Select
+              value={editPhotoType}
+              disabled={updateAttachment.isPending}
+              onValueChange={(v) =>
+                setEditPhotoType((v as PhotoType) ?? "newspaper")
+              }
+            >
+              <SelectTrigger aria-label="Photo type" className="w-full">
+                <SelectValue>
+                  {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {PHOTO_TYPES.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {PHOTO_TYPE_LABELS[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          <div className="ml-auto flex gap-2">
+          <div className="flex justify-end gap-2">
             <Button
               type="button"
               variant="ghost"

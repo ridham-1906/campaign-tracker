@@ -12,6 +12,9 @@ export type AttachmentView = {
   id: string;
   kind: AttachmentKind;
   stage: AttachmentStage | null;
+  /** The user-managed image type this photo was tagged with — null for
+   * documents, and for images uploaded before this field existed. */
+  imageType: { id: string; name: string } | null;
   photoType: PhotoType | null;
   filename: string;
   mimeType: string;
@@ -80,6 +83,11 @@ export type CampaignStatusFilter = (typeof CAMPAIGN_STATUS_FILTERS)[number];
 
 /** Bare option for comboboxes. */
 export type OptionView = { id: string; name: string };
+
+/** One "type of image" option — `role` ties a seeded type back to the fixed
+ * lifecycle stage it represents (installation/mid_date/end_date); a custom
+ * type a user adds inline has none. */
+export type ImageTypeOption = { id: string; name: string; role: AttachmentStage | null };
 
 /** A reference entity plus how many campaigns use it. */
 export type NamedCountView = { id: string; name: string; count: number };

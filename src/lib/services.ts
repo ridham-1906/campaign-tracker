@@ -1,7 +1,7 @@
 import "server-only";
 import { Types } from "mongoose";
 import { connectDB } from "@/lib/db";
-import { Attachment, Campaign, Client, Sales, Vendor } from "@/models";
+import { Attachment, Campaign, Client, ImageType, Sales, Vendor } from "@/models";
 import { getBucketId, getStorage } from "@/lib/appwrite";
 import {
   type CampaignStatus,
@@ -279,4 +279,21 @@ export async function countCampaignsUsing(
       ? { userId, "locations.vendorId": id }
       : { userId, [field]: id };
   return Campaign.countDocuments(filter);
+}
+
+/**
+ * The "+ Add custom type" flow in the type-of-image picker: reuse an existing
+ * type of the same name (case-insensitively) rather than creating a
+ * duplicate, so retyping an already-seeded name like "installation" just
+ * selects it instead of splitting it into two entries.
+ */
+export async function getOrCreateImageType(userId: string, name: string) {
+  await connectDB();
+  const trimmed = name.trim();
+  const existing = await ImageType.find({ userId });
+  const match = existing.find(
+    (t) => t.name.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (match) return match;
+  return ImageType.create({ userId, name: trimmed, role: null });
 }

@@ -1,12 +1,13 @@
 import "server-only";
 import { Types, type PipelineStage } from "mongoose";
 import { connectDB } from "@/lib/db";
-import { Attachment, Campaign, Client, Sales, Vendor } from "@/models";
+import { Attachment, Campaign, Client, ImageType, Sales, Vendor } from "@/models";
 import {
   DEFAULT_REMINDER_LEAD_DAYS,
   addDays,
   businessToday,
 } from "@/lib/campaign";
+import { ATTACHMENT_STAGES, type AttachmentStage } from "@/lib/attachments";
 import { type ListParams, searchRegex } from "@/lib/api";
 import type {
   AttachmentView,
@@ -16,6 +17,7 @@ import type {
   CampaignStats,
   CampaignStatusFilter,
   CampaignView,
+  ImageTypeOption,
   LocationView,
   NamedCountView,
   Page,
@@ -113,6 +115,7 @@ type LeanAttachment = {
   _id: unknown;
   kind: string;
   stage?: string | null;
+  imageTypeId?: unknown;
   photoType?: string | null;
   filename: string;
   mimeType: string;
@@ -120,15 +123,25 @@ type LeanAttachment = {
   uploadedAt?: Date | null;
 };
 
+/**
+ * `imageTypeById` resolves the id to a display name — pass a pre-built map for
+ * a bulk read (see getCampaign), or omit it for a single doc that already has
+ * the ImageType at hand (the upload/reclassify routes construct one inline).
+ */
 export function attachmentViewFrom(
   a: LeanAttachment,
   campaignId: string,
   locationId: string,
+  imageTypeById?: Map<string, string>,
 ): AttachmentView {
+  const imageTypeId = a.imageTypeId ? String(a.imageTypeId) : null;
+  const imageTypeName = imageTypeId ? imageTypeById?.get(imageTypeId) : undefined;
   return {
     id: String(a._id),
     kind: a.kind as AttachmentView["kind"],
     stage: (a.stage ?? null) as AttachmentView["stage"],
+    imageType:
+      imageTypeId && imageTypeName ? { id: imageTypeId, name: imageTypeName } : null,
     photoType: (a.photoType ?? null) as AttachmentView["photoType"],
     filename: a.filename,
     mimeType: a.mimeType,
@@ -136,6 +149,46 @@ export function attachmentViewFrom(
     uploadedAt: new Date(a.uploadedAt ?? Date.now()).toISOString(),
     url: `/api/campaigns/${campaignId}/locations/${locationId}/attachments/${String(a._id)}`,
   };
+}
+
+// ---------------------------------------------------------------- image types
+
+/** Every user starts with these three canonical stages already in place, so
+ * the "type of image" picker never opens empty. `role` ties a seeded type
+ * back to the fixed stage it represents (see models/image-type.ts) — a
+ * custom type a user adds inline has none. */
+const DEFAULT_IMAGE_TYPES: { name: string; role: AttachmentStage }[] = [
+  { name: "Installation", role: "installation" },
+  { name: "Mid date", role: "mid_date" },
+  { name: "End date", role: "end_date" },
+];
+
+const STAGE_ORDER = new Map(ATTACHMENT_STAGES.map((s, i) => [s, i]));
+
+/** Canonical stages first, in their fixed order, then custom types
+ * alphabetically — matches how the picker has always looked. */
+function sortImageTypes<T extends { name: string; role: AttachmentStage | null }>(
+  list: T[],
+): T[] {
+  return [...list].sort((a, b) => {
+    const ra = a.role ? (STAGE_ORDER.get(a.role) ?? ATTACHMENT_STAGES.length) : ATTACHMENT_STAGES.length;
+    const rb = b.role ? (STAGE_ORDER.get(b.role) ?? ATTACHMENT_STAGES.length) : ATTACHMENT_STAGES.length;
+    return ra !== rb ? ra - rb : a.name.localeCompare(b.name);
+  });
+}
+
+/** The full list for a user's "type of image" picker, seeding the three
+ * canonical stages the first time this user touches it. */
+export async function getImageTypeOptions(userId: string): Promise<ImageTypeOption[]> {
+  await connectDB();
+  const existing = await ImageType.find({ userId }).lean();
+  const rows =
+    existing.length > 0
+      ? existing
+      : await ImageType.insertMany(DEFAULT_IMAGE_TYPES.map((t) => ({ ...t, userId })));
+  return sortImageTypes(
+    rows.map((t) => ({ id: String(t._id), name: t.name, role: t.role ?? null })),
+  );
 }
 
 type LeanLocation = {
@@ -483,15 +536,19 @@ export async function getCampaign(
   const campaignId = r._id.toString();
 
   // Attachments are their own collection now, so they come back in one extra
-  // query and get grouped onto their locations here.
-  const attachments = await Attachment.find({ campaignId: r._id })
-    .sort({ uploadedAt: 1 })
-    .lean();
+  // query and get grouped onto their locations here. Image types are fetched
+  // once (not per attachment) and resolved through a map, same shape as the
+  // vendor lookup below.
+  const [attachments, imageTypes] = await Promise.all([
+    Attachment.find({ campaignId: r._id }).sort({ uploadedAt: 1 }).lean(),
+    ImageType.find({ userId }).lean(),
+  ]);
+  const imageTypeById = new Map(imageTypes.map((t) => [String(t._id), t.name]));
   const byLocation = new Map<string, AttachmentView[]>();
   for (const a of attachments) {
     const locationId = String(a.locationId);
     const list = byLocation.get(locationId) ?? [];
-    list.push(attachmentViewFrom(a, campaignId, locationId));
+    list.push(attachmentViewFrom(a, campaignId, locationId, imageTypeById));
     byLocation.set(locationId, list);
   }
 

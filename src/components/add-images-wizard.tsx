@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AttachmentType } from "@/lib/attachments";
+import type { AttachmentStage } from "@/lib/attachments";
 import {
   useCampaignOptionsQuery,
   useCampaignQuery,
@@ -49,7 +49,7 @@ export function AddImagesWizard({
   onOpenChange: (open: boolean) => void;
   initialCampaignId?: string;
   initialLocationId?: string;
-  initialType?: AttachmentType;
+  initialType?: AttachmentStage | "document";
 }) {
   const [step, setStep] = useState(initialCampaignId ? 1 : 0);
   const [campaignId, setCampaignId] = useState(initialCampaignId ?? "");
@@ -76,10 +76,12 @@ export function AddImagesWizard({
 
   // Owned here rather than inside the editor so Upload can sit in the footer
   // as the dialog's primary action. Keyed remount per location resets it.
+  // No onUploaded callback — a successful batch already clears the picked
+  // files (see useLocationUpload), and the dialog stays open so the user can
+  // keep adding more to the same or another location without reopening it.
   const upload = useLocationUpload({
     campaignId,
     locationId: effectiveLocationId,
-    onUploaded: () => onOpenChange(false),
     initialType,
   });
 
@@ -165,8 +167,8 @@ export function AddImagesWizard({
             </Button>
           ) : (
             /* Upload is the dialog's primary action, so it sits here rather
-               than inline under the thumbnails. The dialog closes itself on a
-               fully successful batch. */
+               than inline under the thumbnails. A successful batch clears the
+               thumbnails but leaves the dialog open for the next one. */
             <Button type="button" disabled={!upload.canUpload} onClick={upload.submit}>
               {upload.busy ? (
                 <>
