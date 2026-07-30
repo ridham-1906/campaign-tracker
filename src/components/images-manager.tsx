@@ -30,7 +30,7 @@ import {
 import { RowActions } from "@/components/ui/row-actions";
 import type { CampaignImagesRowView, CampaignView } from "@/lib/view-types";
 
-export function ImagesManager() {
+export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
   const [wizardOpen, setWizardOpen] = useState(false);
   // Bumped every time the wizard opens so it remounts with fresh step/
   // selection state instead of resuming wherever it was left last time.
@@ -113,6 +113,17 @@ export function ImagesManager() {
 
   const columns = useMemo<ColumnDef<CampaignImagesRowView>[]>(
     () => [
+      ...(isAdmin
+        ? [
+            {
+              id: "owner",
+              header: "Owner",
+              cell: ({ row }: { row: { original: CampaignImagesRowView } }) => (
+                <span>{row.original.owner?.name ?? "—"}</span>
+              ),
+            } satisfies ColumnDef<CampaignImagesRowView>,
+          ]
+        : []),
       {
         id: "client",
         header: "Client",
@@ -171,7 +182,7 @@ export function ImagesManager() {
         },
       },
     ],
-    [exportingRowId, exportCampaignPpt],
+    [isAdmin, exportingRowId, exportCampaignPpt],
   );
 
   const renderLocations = useCallback(

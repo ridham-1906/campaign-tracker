@@ -3,7 +3,15 @@ import { NextRequest } from "next/server";
 import { CAMPAIGN_SORT_KEYS, getCampaign, getCampaignsPage } from "@/lib/data";
 import { createCampaignForUser, validateRefsOwned } from "@/lib/services";
 import { CAMPAIGN_STATUS_FILTERS } from "@/lib/view-types";
-import { authGuard, badRequest, created, ok, parseListParams, readJson } from "@/lib/api";
+import {
+  authGuard,
+  badRequest,
+  created,
+  ok,
+  parseListParams,
+  readJson,
+  readScope,
+} from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +71,7 @@ export async function GET(req: NextRequest) {
   });
 
   return ok(
-    await getCampaignsPage(auth.session.userId, {
+    await getCampaignsPage(readScope(auth.session), {
       ...params,
       status: statusSchema.parse(sp.get("status") ?? undefined),
     }),

@@ -56,6 +56,9 @@ export type CampaignListLocationView = Omit<LocationView, "attachments">;
 
 export type CampaignListView = Omit<CampaignView, "locations"> & {
   locations: CampaignListLocationView[];
+  /** Only present when an admin account is viewing every user's campaigns —
+   * absent for a normal, single-user query. */
+  owner?: PersonView;
 };
 
 /** The six stat tiles above the campaigns table. */
@@ -106,6 +109,8 @@ export type CampaignImagesRowView = {
   locationCount: number;
   fileCount: number;
   latestUploadedAt: string; // ISO
+  /** Only present when an admin account is viewing every user's images. */
+  owner?: PersonView;
 };
 
 // ---- Pagination envelope ----

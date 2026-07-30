@@ -97,7 +97,15 @@ function toDraft(c: CampaignRow): CampaignDraft {
   };
 }
 
-export function CampaignManager() {
+export function CampaignManager({
+  isAdmin = false,
+  currentUserId,
+}: {
+  /** True for an ADMIN_EMAILS account — every user's campaigns show up here,
+   * with an Owner column, but only the admin's own rows stay editable. */
+  isAdmin?: boolean;
+  currentUserId?: string;
+}) {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -131,6 +139,13 @@ export function CampaignManager() {
   const missingRefs = clientOptions.length === 0 || salesOptions.length === 0;
 
   const campaigns = query.data?.rows ?? [];
+
+  // `owner` is only ever populated for an admin's all-users query — a normal
+  // user's rows never carry one, so this is always true for them.
+  const isOwn = useCallback(
+    (c: CampaignRow) => !c.owner || c.owner.id === currentUserId,
+    [currentUserId],
+  );
 
   function setFilter(next: CampaignStatusFilter) {
     setStatusFilter(next);
@@ -204,6 +219,15 @@ export function CampaignManager() {
 
   const columns = useMemo<ColumnDef<CampaignRow>[]>(
     () => [
+      ...(isAdmin
+        ? [
+            {
+              id: "owner",
+              accessorFn: (c: CampaignRow) => c.owner?.name ?? "",
+              header: "Owner",
+            } satisfies ColumnDef<CampaignRow>,
+          ]
+        : []),
       {
         id: "client",
         accessorFn: (c) => c.client.name,
@@ -300,28 +324,33 @@ export function CampaignManager() {
         header: "",
         enableSorting: false,
         meta: { className: "w-0 text-right" },
-        cell: ({ row }) => (
-          <RowActions>
-            <DropdownMenuItem
-              disabled={!anyLive(row.original)}
-              onClick={() => sendReminder(row.original)}
-            >
-              Send reminder (all live)
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openEdit(row.original)}>
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => remove(row.original)}
-            >
-              Delete
-            </DropdownMenuItem>
-          </RowActions>
-        ),
+        cell: ({ row }) => {
+          // An admin can only manage their own campaigns — another user's row
+          // shows no actions at all, matching the view-only scope.
+          if (!isOwn(row.original)) return null;
+          return (
+            <RowActions>
+              <DropdownMenuItem
+                disabled={!anyLive(row.original)}
+                onClick={() => sendReminder(row.original)}
+              >
+                Send reminder (all live)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openEdit(row.original)}>
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => remove(row.original)}
+              >
+                Delete
+              </DropdownMenuItem>
+            </RowActions>
+          );
+        },
       },
     ],
-    [openEdit, remove, sendReminder],
+    [isAdmin, isOwn, openEdit, remove, sendReminder],
   );
 
   const renderLocations = useCallback(
@@ -391,17 +420,19 @@ export function CampaignManager() {
                     <StatusBadge status={l.status} endDate={l.endDate} />
                   </td>
                   <td className="py-2 text-right">
-                    <RowActions>
-                      <DropdownMenuItem
-                        disabled={ended}
-                        onClick={() => sendReminder(c, l.id)}
-                      >
-                        Send reminder
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openEdit(c)}>
-                        Edit campaign
-                      </DropdownMenuItem>
-                    </RowActions>
+                    {isOwn(c) && (
+                      <RowActions>
+                        <DropdownMenuItem
+                          disabled={ended}
+                          onClick={() => sendReminder(c, l.id)}
+                        >
+                          Send reminder
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEdit(c)}>
+                          Edit campaign
+                        </DropdownMenuItem>
+                      </RowActions>
+                    )}
                   </td>
                 </tr>
               );
@@ -410,7 +441,7 @@ export function CampaignManager() {
         </table>
       </div>
     ),
-    [openEdit, sendReminder],
+    [isOwn, openEdit, sendReminder],
   );
 
   return (

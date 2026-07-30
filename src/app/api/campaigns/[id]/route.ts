@@ -6,7 +6,7 @@ import {
   updateCampaignForUser,
   validateRefsOwned,
 } from "@/lib/services";
-import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
+import { authGuard, badRequest, notFound, ok, readJson, readScope } from "@/lib/api";
 import { locationSchema } from "../route";
 
 export const runtime = "nodejs";
@@ -38,7 +38,10 @@ export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
   if (!isValidId(id)) return notFound("Campaign not found");
 
-  const view = await getCampaign(auth.session.userId, id);
+  // Admins can view any campaign (for the Images preview/PPT export), but
+  // PATCH/DELETE below stay scoped to the caller's own userId — this is a
+  // read-only widening, never a write one.
+  const view = await getCampaign(readScope(auth.session), id);
   if (!view) return notFound("Campaign not found");
   return ok(view);
 }

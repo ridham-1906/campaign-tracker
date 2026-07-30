@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getCampaignStats } from "@/lib/data";
-import { authGuard, ok } from "@/lib/api";
+import { authGuard, ok, readScope } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,5 +18,5 @@ export async function GET(req: NextRequest) {
   if ("error" in auth) return auth.error;
 
   const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100) || undefined;
-  return ok(await getCampaignStats(auth.session.userId, { q }));
+  return ok(await getCampaignStats(readScope(auth.session), { q }));
 }

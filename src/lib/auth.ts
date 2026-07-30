@@ -14,6 +14,15 @@ import {
 
 export type { SessionPayload };
 
+/** Whether this email is listed in ADMIN_EMAILS — see SessionPayload.isAdmin. */
+export function isAdminEmail(email: string) {
+  const list = process.env.ADMIN_EMAILS ?? "";
+  return list
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .includes(email.toLowerCase());
+}
+
 export async function hashPassword(plain: string) {
   return bcrypt.hash(plain, 10);
 }

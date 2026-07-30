@@ -32,6 +32,16 @@ export async function authGuard(): Promise<
 }
 
 /**
+ * The `userId` to scope a read query by — `null` for an admin session, which
+ * every read layer function (see lib/data.ts) treats as "every user". Writes
+ * never go through this: create/edit/delete routes always pass
+ * `session.userId` directly, so an admin only ever writes their own data.
+ */
+export function readScope(session: SessionPayload): string | null {
+  return session.isAdmin ? null : session.userId;
+}
+
+/**
  * Guard for the cron routes, which authenticate with a shared secret rather
  * than a session. Prefer the Authorization header; the query string is a
  * fallback for schedulers that can't set headers, and shows up in logs.
