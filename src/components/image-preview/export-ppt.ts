@@ -10,7 +10,7 @@ import {
 } from "@/lib/attachments";
 import { safeName } from "@/components/image-preview/download";
 import type { ExportProgress, LocationExportEntry } from "@/lib/ppt/build-execution-ppt";
-import type { LocationView } from "@/lib/view-types";
+import type { LocationPreview } from "@/lib/view-types";
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -27,7 +27,7 @@ function saveBlob(blob: Blob, filename: string) {
  * matching both the chosen stage and photo-type filter is dropped entirely,
  * not given a placeholder. */
 function toEntries(
-  locations: LocationView[],
+  locations: LocationPreview[],
   stageFilter: StageFilter,
   photoFilter: PhotoFilter,
 ): LocationExportEntry[] {
@@ -51,7 +51,7 @@ export function useExportPpt() {
 
   async function exportPpt(
     campaignName: string,
-    locations: LocationView[],
+    locations: LocationPreview[],
     stageFilter: StageFilter,
     photoFilter: PhotoFilter,
     filename: string,

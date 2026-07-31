@@ -113,6 +113,43 @@ export type CampaignImagesRowView = {
   owner?: PersonView;
 };
 
+// ---- Shared preview link ----
+
+/**
+ * The subset of a location the gallery and the deck builder actually read.
+ * `LocationView` satisfies it, so nothing at the existing call sites changes —
+ * it exists so the public share payload can leave out the internal vendor,
+ * status and reminder bookkeeping and still feed the same components.
+ */
+export type LocationPreview = Pick<
+  LocationView,
+  "id" | "city" | "location" | "type" | "startDate" | "midDate" | "endDate" | "attachments"
+>;
+
+/**
+ * What a never-expiring preview link resolves to. No emails, no vendors, no
+ * reminder state: whoever holds the token is outside the app, so this carries
+ * only what the preview page renders.
+ */
+export type SharePreviewView = {
+  token: string;
+  clientName: string;
+  /** The user who shared it, for the "shared by" line. */
+  sharedBy: string;
+  createdAt: string; // ISO
+  fileCount: number;
+  locations: LocationPreview[];
+};
+
+/** What POST /api/campaigns/:id/share answers with. */
+export type ShareSendResult = {
+  ok: true;
+  /** Absolute, never-expiring preview URL. */
+  url: string;
+  sentTo: string;
+  fileCount: number;
+};
+
 // ---- Pagination envelope ----
 
 export type Page<T> = {

@@ -40,11 +40,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AttachmentView, LocationView } from "@/lib/view-types";
+import type { AttachmentView, LocationPreview } from "@/lib/view-types";
 
 /**
  * One location's files: pick a type, page through the images, and download or
  * delete the current file, the ticked ones, or all of them.
+ *
+ * `readOnly` strips every write affordance (add/edit/delete), leaving browse,
+ * download and export — that's the mode the public preview link runs in, where
+ * the visitor has no session for a mutation to authenticate with anyway.
  */
 export function LocationGallery({
   clientName,
@@ -53,15 +57,19 @@ export function LocationGallery({
   confirm,
   onBack,
   onAddImages,
+  readOnly = false,
 }: {
   clientName: string;
-  campaignId: string;
-  location: LocationView;
-  confirm: (options: ConfirmOptions) => Promise<boolean>;
+  /** Required unless `readOnly` — only the write paths address a campaign. */
+  campaignId?: string;
+  location: LocationPreview;
+  /** Required unless `readOnly` — nothing in a read-only gallery to confirm. */
+  confirm?: (options: ConfirmOptions) => Promise<boolean>;
   /** Omitted when the campaign has a single location — nothing to go back to. */
   onBack?: () => void;
   /** Opens the add-images wizard already pointed at this location. */
   onAddImages?: () => void;
+  readOnly?: boolean;
 }) {
   const deleteAttachments = useDeleteAttachments();
   const updateAttachment = useUpdateAttachment();
@@ -108,7 +116,7 @@ export function LocationGallery({
   }
 
   function saveEdit() {
-    if (!current) return;
+    if (!current || !campaignId) return;
     updateAttachment.mutate(
       {
         campaignId,
@@ -199,7 +207,7 @@ export function LocationGallery({
   }
 
   async function runDelete(list: AttachmentView[], what: string) {
-    if (list.length === 0) return;
+    if (list.length === 0 || !campaignId || !confirm) return;
 
     const ok = await confirm({
       title: `Delete ${what}?`,
@@ -279,13 +287,13 @@ export function LocationGallery({
         {/* Two controls, each asking the same question — what should this
             apply to? — so there is nothing to weigh up before clicking. */}
         <div className="ml-auto flex items-center gap-2">
-          {onAddImages && (
+          {!readOnly && onAddImages && (
             <Button type="button" variant="outline" size="sm" onClick={onAddImages}>
               <ImagePlusIcon />
               Add images
             </Button>
           )}
-          {!isDocument && (
+          {!readOnly && !isDocument && (
             <Button
               type="button"
               variant="outline"
@@ -342,19 +350,21 @@ export function LocationGallery({
               )
             }
           />
-          <ScopeMenu
-            label="Delete"
-            icon={busy ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
-            variant="destructive"
-            disabled={items.length === 0 || busy}
-            hasCurrent={Boolean(current)}
-            selectedCount={selected.size}
-            totalCount={items.length}
-            onPick={(scope) => {
-              const { list, what } = resolve(scope);
-              runDelete(list, what);
-            }}
-          />
+          {!readOnly && (
+            <ScopeMenu
+              label="Delete"
+              icon={busy ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
+              variant="destructive"
+              disabled={items.length === 0 || busy}
+              hasCurrent={Boolean(current)}
+              selectedCount={selected.size}
+              totalCount={items.length}
+              onPick={(scope) => {
+                const { list, what } = resolve(scope);
+                runDelete(list, what);
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -420,7 +430,7 @@ export function LocationGallery({
             <p className="text-sm text-muted-foreground">
               Nothing uploaded to {TYPE_LABELS[type]} for this location yet.
             </p>
-            {onAddImages && (
+            {!readOnly && onAddImages && (
               <Button type="button" size="sm" onClick={onAddImages}>
                 <ImagePlusIcon />
                 Add images

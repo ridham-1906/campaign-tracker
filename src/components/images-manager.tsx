@@ -4,13 +4,20 @@ import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ImageIcon, Loader2Icon, PlusIcon, PresentationIcon } from "lucide-react";
+import {
+  ImageIcon,
+  Loader2Icon,
+  PlusIcon,
+  PresentationIcon,
+  SendIcon,
+} from "lucide-react";
 import type { PhotoFilter, StageFilter } from "@/lib/attachments";
 import { formatDate } from "@/lib/campaign";
 import { apiJson } from "@/lib/http";
 import { queryKeys } from "@/lib/query-keys";
 import { useCampaignQuery } from "@/lib/queries/campaigns";
 import { useImagesQuery } from "@/lib/queries/attachments";
+import { useSendPreviewLink } from "@/lib/queries/share";
 import { AddImagesWizard } from "@/components/add-images-wizard";
 import { useExportPpt } from "@/components/image-preview/export-ppt";
 import { ImagePreviewDialog } from "@/components/image-preview/dialog";
@@ -23,6 +30,7 @@ import {
   useTableState,
 } from "@/components/ui/data-table";
 import {
+  DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -60,6 +68,10 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
   const queryClient = useQueryClient();
   const pptExport = useExportPpt();
   const [exportingRowId, setExportingRowId] = useState<string | null>(null);
+  const sendPreviewLink = useSendPreviewLink();
+  // Which row's link is being mailed — the mutation itself only knows that
+  // *a* send is in flight, and the spinner belongs on the row that started it.
+  const [sendingRowId, setSendingRowId] = useState<string | null>(null);
 
   function openWizard(seed?: { campaignId: string; locationId: string }) {
     setWizardKey((k) => k + 1);
@@ -111,6 +123,22 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
     [queryClient, pptExport],
   );
 
+  /**
+   * Mails the campaign's sales person a link to these photos. The link is
+   * public, unguessable and never expires — from it they can browse every
+   * location, download the files and export the deck without an account.
+   */
+  const sendPreview = useCallback(
+    (row: CampaignImagesRowView) => {
+      setSendingRowId(row.id);
+      sendPreviewLink.mutate(
+        { campaignId: row.id },
+        { onSettled: () => setSendingRowId(null) },
+      );
+    },
+    [sendPreviewLink],
+  );
+
   const columns = useMemo<ColumnDef<CampaignImagesRowView>[]>(
     () => [
       ...(isAdmin
@@ -157,8 +185,20 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
         meta: { className: "w-0 text-right" },
         cell: ({ row }) => {
           const busy = exportingRowId === row.original.id;
+          const sending = sendingRowId === row.original.id;
           return (
             <RowActions>
+              <DropdownMenuItem
+                disabled={sending}
+                onClick={() => sendPreview(row.original)}
+              >
+                {sending ? (
+                  <Loader2Icon className="animate-spin" />
+                ) : (
+                  <SendIcon />
+                )}
+                Send to sales
+              </DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   {busy ? (
@@ -182,7 +222,7 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
         },
       },
     ],
-    [isAdmin, exportingRowId, exportCampaignPpt],
+    [isAdmin, exportingRowId, exportCampaignPpt, sendingRowId, sendPreview],
   );
 
   const renderLocations = useCallback(

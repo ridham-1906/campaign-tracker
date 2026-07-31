@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
 
-// Routes that do not require authentication.
-const PUBLIC_PATHS = ["/login"];
+// Routes that do not require authentication. `/preview/<token>` is the
+// emailed share link: the token in the path is its credential, and the sales
+// person it's for has no account here.
+const PUBLIC_PATHS = ["/login", "/preview"];
+
+// The subset that only makes sense logged *out* — a share link stays reachable
+// either way, so the owner can open the same URL they just sent.
+const GUEST_ONLY_PATHS = ["/login"];
+
+const matches = (paths: string[], pathname: string) =>
+  paths.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -10,9 +19,7 @@ export async function proxy(req: NextRequest) {
   const token = req.cookies.get(COOKIE_NAME)?.value;
   const session = token ? await verifySessionToken(token) : null;
 
-  const isPublic = PUBLIC_PATHS.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
+  const isPublic = matches(PUBLIC_PATHS, pathname);
 
   // Not logged in -> force to /login
   if (!session && !isPublic) {
@@ -23,7 +30,7 @@ export async function proxy(req: NextRequest) {
   }
 
   // Logged in but visiting /login -> go to dashboard
-  if (session && isPublic) {
+  if (session && matches(GUEST_ONLY_PATHS, pathname)) {
     const url = req.nextUrl.clone();
     url.pathname = "/";
     url.search = "";

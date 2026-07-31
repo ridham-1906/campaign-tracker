@@ -16,3 +16,4 @@ export * from "@/models/attachment";
 export * from "@/models/image-type";
 export * from "@/models/campaign-location";
 export * from "@/models/campaign";
+export * from "@/models/campaign-share";
