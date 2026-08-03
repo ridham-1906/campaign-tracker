@@ -49,7 +49,7 @@ export function AddImagesWizard({
   onOpenChange: (open: boolean) => void;
   initialCampaignId?: string;
   initialLocationId?: string;
-  initialType?: AttachmentStage | "document";
+  initialType?: AttachmentStage;
 }) {
   const [step, setStep] = useState(initialCampaignId ? 1 : 0);
   const [campaignId, setCampaignId] = useState(initialCampaignId ?? "");

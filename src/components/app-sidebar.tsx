@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Megaphone, Users, Store, Building2, ImageIcon } from "lucide-react";
+import {
+  Megaphone,
+  Users,
+  Store,
+  Building2,
+  ImageIcon,
+  LayoutDashboardIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
-  { href: "/", label: "Campaigns", icon: Megaphone },
+  { href: "/", label: "Dashboard", icon: LayoutDashboardIcon },
+  { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/images", label: "Images", icon: ImageIcon },
   { href: "/sales", label: "Sales persons", icon: Users },
   { href: "/vendors", label: "Vendors", icon: Store },

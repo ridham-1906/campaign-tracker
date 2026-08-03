@@ -44,6 +44,19 @@ export const queryKeys = {
     detail: (id: string) => [...queryKeys.campaigns.all, "detail", id] as const,
     options: () => [...queryKeys.campaigns.all, "options"] as const,
   },
+  /**
+   * The shared dashboard reads every user's campaigns, so it can't share the
+   * `campaigns` key — the same params would collide with the owner-scoped list
+   * and serve one screen the other's rows.
+   */
+  dashboard: {
+    all: ["dashboard"] as const,
+    lists: () => [...queryKeys.dashboard.all, "list"] as const,
+    list: (params: ListKeyParams = {}) =>
+      [...queryKeys.dashboard.lists(), params] as const,
+    stats: (params: Pick<ListKeyParams, "q"> = {}) =>
+      [...queryKeys.dashboard.all, "stats", params] as const,
+  },
   images: {
     all: ["images"] as const,
     lists: () => [...queryKeys.images.all, "list"] as const,

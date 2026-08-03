@@ -241,7 +241,7 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Images</h1>
           <p className="text-sm text-muted-foreground">
-            Every photo and creative deck uploaded across your campaigns.
+            Every photo uploaded across your campaigns.
           </p>
         </div>
         <Button onClick={() => openWizard()}>
