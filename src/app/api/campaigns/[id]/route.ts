@@ -4,7 +4,7 @@ import {
   deleteCampaignForUser,
   isValidId,
   updateCampaignForUser,
-  validateRefsOwned,
+  validateRefs,
 } from "@/lib/services";
 import { authGuard, badRequest, notFound, ok, readJson, readScope } from "@/lib/api";
 import { locationSchema } from "../route";
@@ -21,6 +21,7 @@ const updateSchema = z
   .object({
     clientId: z.string().min(1).optional(),
     salesId: z.string().min(1).optional(),
+    category: z.string().optional(),
     locations: z
       .array(locationSchema)
       .min(1, "A campaign needs at least one location")
@@ -57,12 +58,13 @@ export async function PATCH(req: Request, { params }: Params) {
   const parsed = updateSchema.safeParse(body.data);
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
-  // Validate any referenced records that are being changed belong to the user.
+  // Validate any referenced records that are being changed still exist. The
+  // campaign itself is still owner-scoped below; only the directory is shared.
   const d = parsed.data;
   if (d.salesId || d.clientId || d.locations) {
     const current = await getCampaign(auth.session.userId, id);
     if (!current) return notFound("Campaign not found");
-    const refErr = await validateRefsOwned(auth.session.userId, {
+    const refErr = await validateRefs({
       salesId: d.salesId ?? current.sales.id,
       clientId: d.clientId ?? current.client.id,
       vendorIds: d.locations

@@ -17,8 +17,14 @@
 
 ## Data model
 
-All records except `User` are **scoped to the owning `User`** (`userId`), so each
-backend person only sees their own data.
+`Campaign` and `Attachment` are **scoped to the owning `User`** (`userId`), so
+each backend person only sees their own campaigns and photos.
+
+`Sales`, `Vendor` and `Client` are a **shared directory**: one global list that
+every signed-in user reads, picks from and may edit. They still carry a `userId`,
+but it records *who created the row* and is never used as a query scope. A
+delete is blocked while **any** user's campaign still references the record, so
+the shared list can't be pulled out from under someone else's data.
 
 **Locations, not campaigns, are the unit of everything.** A campaign is a client
 plus a sales person plus one or more locations; dates, status and reminders all
@@ -29,20 +35,28 @@ User (login / backend person)
  ├─ Sales   (name, email)        ← reminder recipients
  ├─ Vendor  (name)
  ├─ Client  (name)
- ├─ Campaign (clientId, salesId)
- │    └─ locations[]  (embedded: city, location, type, vendorId,
+ ├─ Campaign (clientId, salesId, category)
+ │    └─ locations[]  (embedded: city, location, medium, vendorId,
+ │                     type, width, height, sqft,
  │                     startDate, endDate, days, status, reminder fields)
  └─ Attachment (campaignId, locationId, kind, stage, fileId, …)
 ```
 
+`medium` is the media format (Billboard, Gantry, LED…) and `type` is the
+illumination (Lit / Nonlit) — they mirror the MEDIUM and TYPE columns of the
+source spreadsheet. `medium` was itself called `type` until the sheet started
+using TYPE for illumination; `scripts/migrate-medium.ts` renames it in place,
+and the read layer falls back to the old field so un-migrated documents still
+render.
+
 | Model | Key fields |
 | --- | --- |
 | `User` | name, email (unique), password (bcrypt hash), appPassword (Gmail, **AES-256-GCM encrypted**) |
-| `Sales` | name, email, userId |
-| `Vendor` | name, userId |
-| `Client` | name, userId |
-| `Campaign` | userId, clientId, salesId, locations[] |
-| *(embedded)* location | city, location, type, vendorId, startDate, endDate, days, status (`LIVE`/`ENDED`/`PENDING_CREATIVE`), reminderDate, reminderSent, reminderSentAt, creativeReminderSentAt |
+| `Sales` | name, email, userId *(creator only — shared directory)* |
+| `Vendor` | name, userId *(creator only — shared directory)* |
+| `Client` | name, userId *(creator only — shared directory)* |
+| `Campaign` | userId, clientId, salesId, category, locations[] |
+| *(embedded)* location | city, location, medium, vendorId, type, width, height, sqft, startDate, endDate, days, status (`LIVE`/`ENDED`/`PENDING_CREATIVE`), reminderDate, reminderSent, reminderSentAt, creativeReminderSentAt |
 | `Attachment` | userId, campaignId, locationId, kind, stage, fileId, filename, mimeType, size, uploadedAt |
 
 Models are defined under [`src/models/`](../src/models/) and barrelled through

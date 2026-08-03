@@ -53,8 +53,16 @@ export type LocationDraft = {
   id?: string;
   city: string;
   location: string;
-  type: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
   vendorId: string;
+  /** Illumination — "Lit" / "Nonlit". */
+  type: string;
+  // Dimensions are strings here because they are <Input> values; "" means the
+  // user hasn't filled one in, which is not the same as 0.
+  width: string;
+  height: string;
+  sqft: string;
   startDate: string;
   midDate: string;
   endDate: string;
@@ -64,6 +72,8 @@ export type LocationDraft = {
 export type CampaignDraft = {
   clientId: string;
   salesId: string;
+  /** One value for the whole campaign, not per location. */
+  category: string;
   locations: LocationDraft[];
 };
 
@@ -71,8 +81,12 @@ export function emptyLocation(): LocationDraft {
   return {
     city: "",
     location: "",
-    type: "",
+    medium: "",
     vendorId: "",
+    type: "",
+    width: "",
+    height: "",
+    sqft: "",
     startDate: "",
     midDate: "",
     endDate: "",
@@ -81,7 +95,7 @@ export function emptyLocation(): LocationDraft {
 }
 
 export function emptyCampaign(): CampaignDraft {
-  return { clientId: "", salesId: "", locations: [emptyLocation()] };
+  return { clientId: "", salesId: "", category: "", locations: [emptyLocation()] };
 }
 
 /**
@@ -102,17 +116,25 @@ const CREATE_STEPS = [
 ] as const;
 const EDIT_STEPS = ["Details", "Locations", "Dates & reminders"] as const;
 
+/**
+ * "renew" writes a new campaign like "create" does, but every field is already
+ * carried over from the one being renewed — so it skips the Excel import step
+ * and opens straight on the dates, which are the only thing that actually
+ * changes. Earlier steps stay reachable via the step bar.
+ */
+export type CampaignFormMode = "create" | "edit" | "renew";
+
 export function CampaignForm({
   draft,
   setDraft,
-  editing,
+  mode,
   saving,
   onSubmit,
   onCancel,
 }: {
   draft: CampaignDraft;
   setDraft: (next: CampaignDraft) => void;
-  editing: boolean;
+  mode: CampaignFormMode;
   saving: boolean;
   onSubmit: () => void;
   onCancel: () => void;
@@ -122,7 +144,13 @@ export function CampaignForm({
   // ids), so it reads the same cache entry the vendor combobox uses.
   const { data: vendorOptions = [] } = useEntityOptions("vendors");
 
-  const [step, setStep] = useState(0);
+  const steps = mode === "create" ? CREATE_STEPS : EDIT_STEPS;
+
+  // A renewal opens on the last step — everything before it is already filled
+  // in from the campaign being renewed.
+  const [step, setStep] = useState(() =>
+    mode === "renew" ? EDIT_STEPS.length - 1 : 0,
+  );
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
@@ -130,7 +158,6 @@ export function CampaignForm({
   const [locStatus, setLocStatus] = useState("all");
   const [startFrom, setStartFrom] = useState("");
   const [endTo, setEndTo] = useState("");
-  const steps = editing ? EDIT_STEPS : CREATE_STEPS;
   const currentStep = steps[step];
 
   function setLocation(index: number, patch: Partial<LocationDraft>) {
@@ -152,6 +179,26 @@ export function CampaignForm({
       ...draft,
       locations: draft.locations.filter((_, i) => i !== index),
     });
+  }
+
+  /**
+   * W and H also drive SQFT, the way the source sheet's `= W * H` formula does.
+   * The recomputed value goes out in the *same* patch as the edited dimension,
+   * so this stays one render and one state write. SQFT keeps its own plain
+   * `setLocation` handler, so a hand-entered area survives until W or H moves
+   * again — some sites aren't rectangles.
+   */
+  function setSize(index: number, patch: { width?: string; height?: string }) {
+    const l = draft.locations[index];
+    const width = patch.width ?? l.width;
+    const height = patch.height ?? l.height;
+    const w = Number(width);
+    const h = Number(height);
+    const sqft =
+      width.trim() && height.trim() && Number.isFinite(w) && Number.isFinite(h)
+        ? String(w * h)
+        : l.sqft;
+    setLocation(index, { ...patch, sqft });
   }
 
   /** Copy the first location's dates onto the rest — the common case. */
@@ -181,7 +228,13 @@ export function CampaignForm({
     try {
       const result = await parseCampaignExcel(file, vendorOptions);
       if (result.locations.length > 0) {
-        setDraft({ ...draft, locations: result.locations });
+        setDraft({
+          ...draft,
+          // Category is campaign-wide, so it comes off the sheet once. An
+          // absent column leaves whatever was already typed in.
+          category: result.category || draft.category,
+          locations: result.locations,
+        });
       }
       setImportSummary(
         result.locations.length > 0
@@ -204,7 +257,8 @@ export function CampaignForm({
     if (currentStep === "Upload Excel") return true;
     if (currentStep === "Locations")
       return draft.locations.every(
-        (l) => l.city.trim() && l.location.trim() && l.type.trim() && l.vendorId,
+        // Category and the W/H/SQFT/Type block are all optional.
+        (l) => l.city.trim() && l.location.trim() && l.medium.trim() && l.vendorId,
       );
     return draft.locations.every((l) => l.startDate && l.endDate);
   }, [currentStep, draft]);
@@ -238,7 +292,9 @@ export function CampaignForm({
       .filter(({ l }) => {
         if (
           q &&
-          ![l.location, l.city, l.type].some((v) => v.toLowerCase().includes(q))
+          ![l.location, l.city, l.medium, l.type].some((v) =>
+            v.toLowerCase().includes(q),
+          )
         ) {
           return false;
         }
@@ -329,8 +385,9 @@ export function CampaignForm({
                     <p className="text-sm font-medium">Upload campaign sheet</p>
                     <p className="text-xs text-muted-foreground">
                       Use one campaign per file, with one row per location.
-                      Expected columns are Vendor, City, Type, Location, Start
-                      date and End date.
+                      Expected columns are Vendor, City, Medium, Location, Start
+                      date and End date. Category, W, H, SQFT and Type are picked
+                      up too when the sheet has them.
                     </p>
                   </div>
                   <Input
@@ -377,6 +434,18 @@ export function CampaignForm({
 
         {currentStep === "Locations" && (
           <div className="space-y-3">
+            {/* Campaign-wide, so it sits above the list rather than repeating
+                on every card. */}
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <Field label="Category">
+                <Input
+                  value={draft.category}
+                  onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+                  placeholder="Applies to every location in this campaign"
+                />
+              </Field>
+            </div>
+
             {draft.locations.map((l, i) => (
               <div key={i} className="rounded-lg border p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -411,11 +480,11 @@ export function CampaignForm({
                       placeholder="Mumbai"
                     />
                   </Field>
-                  <Field label="Type">
+                  <Field label="Medium">
                     <Input
-                      value={l.type}
-                      onChange={(e) => setLocation(i, { type: e.target.value })}
-                      placeholder="Billboard, Digital…"
+                      value={l.medium}
+                      onChange={(e) => setLocation(i, { medium: e.target.value })}
+                      placeholder="Billboard, Gantry, LED…"
                     />
                   </Field>
                   <Field label="Vendor">
@@ -426,6 +495,41 @@ export function CampaignForm({
                       onChange={(v) => setLocation(i, { vendorId: v })}
                     />
                   </Field>
+                  {/* The sheet's W / H / SQFT / TYPE block, kept on one row so
+                      it reads the way the spreadsheet does. */}
+                  <div className="grid grid-cols-2 gap-3 sm:col-span-2 sm:grid-cols-4">
+                    <Field label="W">
+                      <Input
+                        inputMode="decimal"
+                        value={l.width}
+                        onChange={(e) => setSize(i, { width: e.target.value })}
+                        placeholder="20"
+                      />
+                    </Field>
+                    <Field label="H">
+                      <Input
+                        inputMode="decimal"
+                        value={l.height}
+                        onChange={(e) => setSize(i, { height: e.target.value })}
+                        placeholder="10"
+                      />
+                    </Field>
+                    <Field label="SQFT">
+                      <Input
+                        inputMode="decimal"
+                        value={l.sqft}
+                        onChange={(e) => setLocation(i, { sqft: e.target.value })}
+                        placeholder="W × H"
+                      />
+                    </Field>
+                    <Field label="Type">
+                      <Input
+                        value={l.type}
+                        onChange={(e) => setLocation(i, { type: e.target.value })}
+                        placeholder="Lit, Nonlit…"
+                      />
+                    </Field>
+                  </div>
                 </div>
               </div>
             ))}
@@ -439,6 +543,15 @@ export function CampaignForm({
 
         {currentStep === "Dates & reminders" && (
           <div className="space-y-3">
+            {mode === "renew" && (
+              <p className="rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+                Client, sales person and every placement have been carried over.
+                Each new term is suggested to start the day after the last one
+                ended, keeping its original length — adjust anything below
+                before creating the renewal.
+              </p>
+            )}
+
             {draft.locations.length > 1 && (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
@@ -657,7 +770,13 @@ export function CampaignForm({
             disabled={saving || importing || !stepValid || datesOutOfOrder}
             onClick={onSubmit}
           >
-            {saving ? "Saving…" : editing ? "Save changes" : "Create campaign"}
+            {saving
+              ? "Saving…"
+              : mode === "edit"
+                ? "Save changes"
+                : mode === "renew"
+                  ? "Create renewal"
+                  : "Create campaign"}
           </Button>
         ) : (
           <Button

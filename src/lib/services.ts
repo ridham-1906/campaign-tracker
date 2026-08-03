@@ -20,8 +20,14 @@ export type LocationInput = {
   id?: string;
   city: string;
   location: string;
-  type: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
   vendorId: string;
+  /** Illumination — "Lit" / "Nonlit". */
+  type?: string;
+  width?: number;
+  height?: number;
+  sqft?: number;
   startDate: Date;
   midDate?: Date;
   endDate: Date;
@@ -31,6 +37,7 @@ export type LocationInput = {
 export type CampaignInput = {
   clientId: string;
   salesId: string;
+  category?: string;
   locations: LocationInput[];
 };
 
@@ -106,8 +113,12 @@ function buildLocation(input: LocationInput) {
   return {
     city: input.city,
     location: input.location,
-    type: input.type,
+    medium: input.medium,
     vendorId: input.vendorId,
+    type: input.type ?? "",
+    width: input.width ?? null,
+    height: input.height ?? null,
+    sqft: input.sqft ?? null,
     startDate: start,
     midDate: mid,
     endDate: end,
@@ -118,13 +129,19 @@ function buildLocation(input: LocationInput) {
 }
 
 /**
- * Verify every referenced record exists and belongs to the user. Vendors now
- * live on the locations, so all the distinct vendor ids are checked in one go.
+ * Verify every referenced record exists. Vendors now live on the locations, so
+ * all the distinct vendor ids are checked in one go.
+ *
+ * There is no ownership half to this check any more: clients, vendors and
+ * sales people are a shared directory (see models/client.ts), so any of them
+ * is a legitimate reference for any user's campaign. Existence still is
+ * checked — a campaign must never point at an id that isn't there.
  */
-export async function validateRefsOwned(
-  userId: string,
-  refs: { salesId: string; clientId: string; vendorIds: string[] },
-): Promise<string | null> {
+export async function validateRefs(refs: {
+  salesId: string;
+  clientId: string;
+  vendorIds: string[];
+}): Promise<string | null> {
   if (!isValidId(refs.salesId)) return "Invalid salesId";
   if (!isValidId(refs.clientId)) return "Invalid clientId";
 
@@ -133,10 +150,10 @@ export async function validateRefsOwned(
 
   await connectDB();
   const [sales, client, vendors] = await Promise.all([
-    Sales.countDocuments({ _id: refs.salesId, userId }),
-    Client.countDocuments({ _id: refs.clientId, userId }),
+    Sales.countDocuments({ _id: refs.salesId }),
+    Client.countDocuments({ _id: refs.clientId }),
     vendorIds.length
-      ? Vendor.countDocuments({ _id: { $in: vendorIds }, userId })
+      ? Vendor.countDocuments({ _id: { $in: vendorIds } })
       : 0,
   ]);
   if (!sales) return "salesId not found";
@@ -156,6 +173,7 @@ export async function createCampaignForUser(
     userId,
     clientId: input.clientId,
     salesId: input.salesId,
+    category: input.category ?? "",
     locations: input.locations.map(buildLocation),
   });
 }
@@ -177,6 +195,7 @@ export async function updateCampaignForUser(
 
   if (input.clientId !== undefined) campaign.clientId = input.clientId as never;
   if (input.salesId !== undefined) campaign.salesId = input.salesId as never;
+  if (input.category !== undefined) campaign.category = input.category;
 
   if (input.locations !== undefined) {
     const keptIds = new Set(
@@ -267,17 +286,19 @@ export async function deleteCampaignForUser(userId: string, id: string) {
  * Count campaigns referencing a person, to block deletes of in-use records.
  * A vendor counts once per campaign even if several of its locations use it —
  * so the "in use by N campaign(s)" message stays literally true.
+ *
+ * Counted across every user, not just the one asking. The directory is shared
+ * but campaigns are not, so scoping this to the caller would let one user
+ * delete a client that another user's campaigns still point at, leaving those
+ * campaigns with a dangling reference and a blank name in the list.
  */
 export async function countCampaignsUsing(
-  userId: string,
   field: "salesId" | "vendorId" | "clientId",
   id: string,
 ) {
   await connectDB();
   const filter =
-    field === "vendorId"
-      ? { userId, "locations.vendorId": id }
-      : { userId, [field]: id };
+    field === "vendorId" ? { "locations.vendorId": id } : { [field]: id };
   return Campaign.countDocuments(filter);
 }
 

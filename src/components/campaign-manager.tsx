@@ -5,9 +5,12 @@ import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import {
+  addDays,
+  businessToday,
   daysUntil,
   formatDate,
   lifecycleState,
+  startOfDay,
   toDateInputValue,
 } from "@/lib/campaign";
 import {
@@ -24,6 +27,7 @@ import {
   CampaignForm,
   emptyCampaign,
   type CampaignDraft,
+  type CampaignFormMode,
   type LocationDraft,
 } from "@/components/campaign-form";
 import { Button } from "@/components/ui/button";
@@ -77,16 +81,26 @@ function earliestStart(c: CampaignRow) {
   return Math.min(...c.locations.map((l) => new Date(l.startDate).getTime()));
 }
 
+/** Dimensions are numbers on the wire and `<Input>` strings in the draft. */
+function sizeText(v: number | null) {
+  return v == null ? "" : String(v);
+}
+
 function toDraft(c: CampaignRow): CampaignDraft {
   return {
     clientId: c.client.id,
     salesId: c.sales.id,
+    category: c.category,
     locations: c.locations.map(
       (l): LocationDraft => ({
         id: l.id,
         city: l.city,
         location: l.location,
+        medium: l.medium,
         type: l.type,
+        width: sizeText(l.width),
+        height: sizeText(l.height),
+        sqft: sizeText(l.sqft),
         vendorId: l.vendor.id,
         startDate: toDateInputValue(l.startDate),
         midDate: l.midDate ? toDateInputValue(l.midDate) : "",
@@ -94,6 +108,58 @@ function toDraft(c: CampaignRow): CampaignDraft {
         status: l.status,
       }),
     ),
+  };
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * A renewal is a *new* campaign that reuses an existing one's client, sales
+ * person and placements — only the dates move. Location ids are deliberately
+ * dropped so the server inserts fresh subdocuments: the campaign being renewed
+ * (and its photos) is left completely untouched.
+ *
+ * Each location is shifted on its own, keeping its original length, so a
+ * campaign whose placements ran to different end dates renews as the same
+ * staggered set rather than being flattened onto one term. The new term starts
+ * the day after the old one ended — or today, if that has already passed, so
+ * renewing a long-expired campaign never proposes dates in the past.
+ *
+ * Every status resets to LIVE: a renewal is a fresh booking, not a
+ * continuation of whatever state the last one finished in.
+ */
+function renewalDraft(c: CampaignRow): CampaignDraft {
+  const today = businessToday();
+
+  return {
+    clientId: c.client.id,
+    salesId: c.sales.id,
+    category: c.category,
+    locations: c.locations.map((l): LocationDraft => {
+      const oldStart = startOfDay(new Date(l.startDate));
+      const oldEnd = startOfDay(new Date(l.endDate));
+      const start = new Date(
+        Math.max(addDays(oldEnd, 1).getTime(), today.getTime()),
+      );
+      const shift = Math.round((start.getTime() - oldStart.getTime()) / MS_PER_DAY);
+
+      return {
+        city: l.city,
+        location: l.location,
+        medium: l.medium,
+        type: l.type,
+        width: sizeText(l.width),
+        height: sizeText(l.height),
+        sqft: sizeText(l.sqft),
+        vendorId: l.vendor.id,
+        startDate: toDateInputValue(start),
+        midDate: l.midDate
+          ? toDateInputValue(addDays(startOfDay(new Date(l.midDate)), shift))
+          : "",
+        endDate: toDateInputValue(addDays(oldEnd, shift)),
+        status: "LIVE",
+      };
+    }),
   };
 }
 
@@ -109,7 +175,11 @@ export function CampaignManager({
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [mode, setMode] = useState<CampaignFormMode>("create");
   const [draft, setDraft] = useState<CampaignDraft>(emptyCampaign);
+  // Bumped on every open so the form remounts with fresh step state, even when
+  // the same campaign is reopened or two renewals are started back to back.
+  const [formNonce, setFormNonce] = useState(0);
   const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
 
   const table = useTableState();
@@ -156,13 +226,27 @@ export function CampaignManager({
 
   function openAdd() {
     setEditingId(null);
+    setMode("create");
     setDraft(emptyCampaign());
+    setFormNonce((n) => n + 1);
     setOpen(true);
   }
 
   const openEdit = useCallback((c: CampaignRow) => {
     setEditingId(c.id);
+    setMode("edit");
     setDraft(toDraft(c));
+    setFormNonce((n) => n + 1);
+    setOpen(true);
+  }, []);
+
+  /** Prefill a brand-new campaign from an existing one — see renewalDraft(). */
+  const openRenew = useCallback((c: CampaignRow) => {
+    // No editingId: this saves as a create, leaving the original in place.
+    setEditingId(null);
+    setMode("renew");
+    setDraft(renewalDraft(c));
+    setFormNonce((n) => n + 1);
     setOpen(true);
   }, []);
 
@@ -173,11 +257,18 @@ export function CampaignManager({
         payload: {
           clientId: draft.clientId,
           salesId: draft.salesId,
+          category: draft.category,
           locations: draft.locations.map((l) => ({
             ...(l.id ? { id: l.id } : {}),
             city: l.city,
             location: l.location,
+            medium: l.medium,
+            // Sent as the raw input strings — the API's zod schema coerces them
+            // and turns "" into "not set" rather than 0.
             type: l.type,
+            width: l.width,
+            height: l.height,
+            sqft: l.sqft,
             vendorId: l.vendorId,
             startDate: l.startDate,
             midDate: l.midDate,
@@ -242,10 +333,21 @@ export function CampaignManager({
         header: "Sales",
       },
       {
+        id: "category",
+        accessorFn: (c) => c.category,
+        header: "Category",
+        enableSorting: false,
+        cell: ({ getValue }) => (
+          <span className="text-muted-foreground">
+            {getValue<string>() || "—"}
+          </span>
+        ),
+      },
+      {
         id: "locations",
-        // The search term now goes to the server, which matches it against
-        // every location's name, city, type and vendor — see buildSearch()
-        // in lib/data.ts.
+        // The search term now goes to the server, which matches it against the
+        // campaign's category and every location's name, city, medium, type and
+        // vendor — see buildSearch() in lib/data.ts.
         header: "Locations",
         enableSorting: false,
         cell: ({ row }) => {
@@ -339,6 +441,9 @@ export function CampaignManager({
               <DropdownMenuItem onClick={() => openEdit(row.original)}>
                 Edit
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openRenew(row.original)}>
+                Renew
+              </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
                 onClick={() => remove(row.original)}
@@ -350,7 +455,7 @@ export function CampaignManager({
         },
       },
     ],
-    [isAdmin, isOwn, openEdit, remove, sendReminder],
+    [isAdmin, isOwn, openEdit, openRenew, remove, sendReminder],
   );
 
   const renderLocations = useCallback(
@@ -361,6 +466,10 @@ export function CampaignManager({
             <tr className="text-left text-xs text-muted-foreground">
               <th className="pb-2 pr-4 font-medium">Location</th>
               <th className="pb-2 pr-4 font-medium">City</th>
+              <th className="pb-2 pr-4 font-medium">Medium</th>
+              <th className="pb-2 pr-4 font-medium">W</th>
+              <th className="pb-2 pr-4 font-medium">H</th>
+              <th className="pb-2 pr-4 font-medium">SQFT</th>
               <th className="pb-2 pr-4 font-medium">Type</th>
               <th className="pb-2 pr-4 font-medium">Vendor</th>
               <th className="pb-2 pr-4 font-medium">Start</th>
@@ -382,7 +491,17 @@ export function CampaignManager({
                 >
                   <td className="py-2 pr-4">{l.location}</td>
                   <td className="py-2 pr-4">{l.city}</td>
-                  <td className="py-2 pr-4">{l.type}</td>
+                  <td className="py-2 pr-4">{l.medium}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.width ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.height ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.sqft ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4">{l.type || "—"}</td>
                   <td className="py-2 pr-4">{l.vendor.name}</td>
                   <td className="py-2 pr-4 text-muted-foreground">
                     {formatDate(l.startDate)}
@@ -566,15 +685,19 @@ export function CampaignManager({
         <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              {editingId ? "Edit campaign" : "New campaign"}
+              {mode === "edit"
+                ? "Edit campaign"
+                : mode === "renew"
+                  ? "Renew campaign"
+                  : "New campaign"}
             </DialogTitle>
           </DialogHeader>
 
           <CampaignForm
-            key={editingId ?? "new"}
+            key={formNonce}
             draft={draft}
             setDraft={setDraft}
-            editing={Boolean(editingId)}
+            mode={mode}
             saving={saveCampaign.isPending}
             onSubmit={save}
             onCancel={() => setOpen(false)}

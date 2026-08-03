@@ -32,8 +32,16 @@ export type LocationPayload = {
   id?: string;
   city: string;
   location: string;
-  type: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
   vendorId: string;
+  /** Illumination — "Lit" / "Nonlit". */
+  type: string;
+  // Dimensions go out as the form's raw input strings; the API coerces them and
+  // reads "" as "not set".
+  width: string;
+  height: string;
+  sqft: string;
   startDate: string;
   midDate: string;
   endDate: string;
@@ -43,6 +51,7 @@ export type LocationPayload = {
 export type CampaignPayload = {
   clientId: string;
   salesId: string;
+  category: string;
   locations: LocationPayload[];
 };
 

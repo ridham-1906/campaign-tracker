@@ -228,7 +228,7 @@ function photoTypeLabelOf(photo: AttachmentView): string {
 function locationFields(location: LocationPreview) {
   return {
     header: `${location.city} · ${location.location}`,
-    mediaType: location.type,
+    mediaType: location.medium,
   };
 }
 

@@ -8,6 +8,8 @@ export const campaignSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     clientId: { type: Schema.Types.ObjectId, ref: "Client", required: true },
     salesId: { type: Schema.Types.ObjectId, ref: "Sales", required: true },
+    // Campaign-wide, not per-location — one value covers every placement.
+    category: { type: String, default: "" },
 
     locations: {
       type: [campaignLocationSchema],

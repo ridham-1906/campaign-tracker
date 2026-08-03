@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i 's/^  type: string;$/  medium: string;/' src/lib/reminders/types.ts src/lib/mail/creative-reminder.ts src/lib/mail/expiry-reminder.ts)",
+      "Bash(sed -i 's/        type: l\\\\.type,/        medium: l.medium,/' src/lib/reminders/creative.ts src/lib/reminders/expiry.ts)",
+      "Bash(sed -i 's/{ label: \"Type\", value: l\\\\.type }/{ label: \"Medium\", value: l.medium }/' src/lib/mail/creative-reminder.ts src/lib/mail/expiry-reminder.ts)",
+      "Bash(sed -i 's/, ${l\\\\.type}\\)/, ${l.medium}\\)/' src/lib/mail/creative-reminder.ts src/lib/mail/expiry-reminder.ts)",
+      "Bash(npm run *)"
+    ]
+  }
+}

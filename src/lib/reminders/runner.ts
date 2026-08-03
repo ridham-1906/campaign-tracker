@@ -59,7 +59,7 @@ export async function findDueJobs(
     _id: `${l}._id`,
     city: `${l}.city`,
     location: `${l}.location`,
-    type: `${l}.type`,
+    medium: `${l}.medium`,
     startDate: `${l}.startDate`,
     endDate: `${l}.endDate`,
   });

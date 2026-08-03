@@ -344,7 +344,7 @@ function ImageLocationsPanel({
           <tr className="text-left text-xs text-muted-foreground">
             <th className="pb-2 pr-4 font-medium">Location</th>
             <th className="pb-2 pr-4 font-medium">City</th>
-            <th className="pb-2 pr-4 font-medium">Type</th>
+            <th className="pb-2 pr-4 font-medium">Medium</th>
             <th className="pb-2 pr-4 font-medium">Files</th>
             <th className="pb-2 font-medium">Last upload</th>
           </tr>
@@ -371,7 +371,7 @@ function ImageLocationsPanel({
               >
                 <td className="py-2 pr-4 font-medium">{l.location}</td>
                 <td className="py-2 pr-4">{l.city}</td>
-                <td className="py-2 pr-4">{l.type}</td>
+                <td className="py-2 pr-4">{l.medium}</td>
                 <td className="py-2 pr-4">
                   {l.attachments.length === 0 ? (
                     <span className="text-muted-foreground">0</span>

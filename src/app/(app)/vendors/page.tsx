@@ -8,7 +8,7 @@ export default async function VendorsPage() {
     <NamedResourceManager
       resource="vendors"
       singular="Vendor"
-      description="Media / space vendors used on campaigns."
+      description="Media / space vendors used on campaigns. Shared across the whole team."
     />
   );
 }

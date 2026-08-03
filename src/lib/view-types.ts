@@ -28,7 +28,14 @@ export type LocationView = {
   id: string;
   city: string;
   location: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
+  /** Illumination — "Lit" / "Nonlit". `""` when never filled in. */
   type: string;
+  /** Site dimensions in feet; null when never filled in. */
+  width: number | null;
+  height: number | null;
+  sqft: number | null;
   days: number;
   status: string;
   vendor: PersonView;
@@ -43,6 +50,8 @@ export type CampaignView = {
   id: string;
   client: PersonView;
   sales: PersonView;
+  /** Campaign-wide classification. `""` when never filled in. */
+  category: string;
   locations: LocationView[];
 };
 
@@ -123,7 +132,18 @@ export type CampaignImagesRowView = {
  */
 export type LocationPreview = Pick<
   LocationView,
-  "id" | "city" | "location" | "type" | "startDate" | "midDate" | "endDate" | "attachments"
+  | "id"
+  | "city"
+  | "location"
+  | "medium"
+  | "type"
+  | "width"
+  | "height"
+  | "sqft"
+  | "startDate"
+  | "midDate"
+  | "endDate"
+  | "attachments"
 >;
 
 /**

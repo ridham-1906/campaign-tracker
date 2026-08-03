@@ -7,7 +7,7 @@ export type DueLocation = {
   _id: Types.ObjectId;
   city: string;
   location: string;
-  type: string;
+  medium: string;
   startDate: Date;
   endDate: Date;
 };

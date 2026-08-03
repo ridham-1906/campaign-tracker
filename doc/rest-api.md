@@ -5,8 +5,13 @@ Designed for use from Postman or any HTTP client.
 
 Base URL = your `APP_URL` (e.g. `http://localhost:3000`).
 
-All data is **scoped to the logged-in user** — you only ever see and modify your
-own records.
+Campaigns and attachments are **scoped to the logged-in user** — you only ever
+see and modify your own.
+
+Sales people, vendors and clients are a **shared directory**: `/api/sales`,
+`/api/vendors` and `/api/clients` return the same global list to every user, and
+any user may create, rename or delete an entry. A delete returns `409` while any
+user's campaign still references it.
 
 ## Authentication
 
@@ -195,51 +200,83 @@ and streams each file from
 
 ### Create body
 
+Vendors, dates and status live on each **location**, not on the campaign.
+`category` is the one classification field that is campaign-wide.
+
 ```json
 {
   "clientId": "<client id>",
   "salesId": "<sales id>",
-  "vendorId": "<vendor id>",
-  "city": "Mumbai",
-  "type": "Billboard",
-  "location": "Bandra",
-  "startDate": "2026-07-10",
-  "endDate": "2026-08-10",
-  "status": "ACTIVE",          // optional: ACTIVE | PAUSED | COMPLETED
-  "reminderDate": "2026-08-03" // optional: defaults to endDate - 7 days
+  "category": "Retail",            // optional, campaign-wide
+  "locations": [
+    {
+      "city": "Mumbai",
+      "location": "Bandra",
+      "medium": "Billboard",       // media format
+      "vendorId": "<vendor id>",
+      "type": "Nonlit",            // optional: illumination
+      "width": 20,                 // optional
+      "height": 10,                // optional
+      "sqft": 200,                 // optional; the UI prefills width × height
+      "startDate": "2026-07-10",
+      "midDate": "",               // optional: "" means not set
+      "endDate": "2026-08-10",
+      "status": "LIVE"             // optional: LIVE | ENDED | PENDING_CREATIVE
+    }
+  ]
 }
 ```
 
 Rules:
-- `clientId` / `salesId` / `vendorId` must be **your** records, else `400`.
-- `endDate` must be on or after `startDate`, else `400`.
-- `days` is computed automatically.
+- `clientId` / `salesId` / `vendorId` must exist, else `400`. (They are a shared
+  directory, so they need not be records you created.)
+- At least one location is required.
+- `endDate` must be on or after `startDate`, and `midDate` between the two, else `400`.
+- `days` and the whole reminder schedule are computed from the dates.
+- `width` / `height` / `sqft` accept `""` for "not set"; it is **not** stored as 0.
 
 ### Response shape
 
 ```json
 {
   "id": "…",
-  "city": "Mumbai", "type": "Billboard", "location": "Bandra",
-  "days": 32, "status": "ACTIVE",
-  "startDate": "…", "endDate": "…",
-  "sales":  { "id": "…", "name": "Ravi Kumar", "email": "ravi@company.com" },
-  "vendor": { "id": "…", "name": "Urban Outdoor" },
+  "category": "Retail",
   "client": { "id": "…", "name": "Zenith Retail" },
-  "reminder": { "id": "…", "date": "…", "sent": false, "sentAt": null }
+  "sales":  { "id": "…", "name": "Ravi Kumar", "email": "ravi@company.com" },
+  "locations": [
+    {
+      "id": "…",
+      "city": "Mumbai", "location": "Bandra",
+      "medium": "Billboard", "type": "Nonlit",
+      "width": 20, "height": 10, "sqft": 200,
+      "days": 32, "status": "LIVE",
+      "vendor": { "id": "…", "name": "Urban Outdoor" },
+      "startDate": "…", "midDate": null, "endDate": "…",
+      "reminder": { "date": "…", "sent": false, "sentAt": null },
+      "attachments": [ … ]
+    }
+  ]
 }
 ```
 
+List rows (`GET /api/campaigns`) use the same shape minus
+`locations[].attachments`.
+
 ### Update (PATCH) examples
 
-```bash
-# Change status only
-curl -b cookies.txt -X PATCH http://localhost:3000/api/campaigns/<id> \
-  -H "Content-Type: application/json" -d '{"status":"COMPLETED"}'
+`locations` is sent whole, not patched piecemeal: elements with an `id` are
+updated, elements without one are inserted, and anything omitted is deleted
+(along with its attachments).
 
-# Move the reminder date (re-arms it if in the future)
+```bash
+# Change the campaign-wide category only
 curl -b cookies.txt -X PATCH http://localhost:3000/api/campaigns/<id> \
-  -H "Content-Type: application/json" -d '{"reminderDate":"2026-08-01"}'
+  -H "Content-Type: application/json" -d '{"category":"Retail"}'
+
+# Replace the locations array
+curl -b cookies.txt -X PATCH http://localhost:3000/api/campaigns/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"locations":[{"id":"<loc id>","city":"Mumbai","location":"Bandra","medium":"Billboard","vendorId":"<vendor id>","type":"Lit","width":20,"height":10,"sqft":200,"startDate":"2026-07-10","midDate":"","endDate":"2026-08-10","status":"LIVE"}]}'
 ```
 
 ### Send reminder now

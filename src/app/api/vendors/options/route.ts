@@ -8,5 +8,5 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
-  return ok(await getVendorList(auth.session.userId));
+  return ok(await getVendorList());
 }

@@ -195,7 +195,12 @@ type LeanLocation = {
   _id: unknown;
   city: string;
   location: string;
-  type: string;
+  medium?: string;
+  /** Pre-rename documents still carry the media format here — see mediumOf. */
+  type?: string;
+  width?: number | null;
+  height?: number | null;
+  sqft?: number | null;
   days: number;
   status: string;
   vendorId: unknown;
@@ -207,6 +212,19 @@ type LeanLocation = {
   reminderSentAt?: Date | null;
 };
 
+/**
+ * Split the two meanings `type` has had. Documents written before the rename
+ * keep the media format in `type` and have no `medium` at all; for those the
+ * illumination is simply unknown, and reading `type` straight through would
+ * label a Billboard as its lighting. The migration clears this up permanently —
+ * this only keeps un-migrated data readable in the meantime.
+ */
+function mediumOf(l: LeanLocation) {
+  return l.medium
+    ? { medium: l.medium, type: l.type ?? "" }
+    : { medium: l.type ?? "", type: "" };
+}
+
 /** Vendors are resolved from a Map rather than a populate/$lookup — see getCampaignsPage. */
 function locationFrom(
   l: LeanLocation,
@@ -216,7 +234,10 @@ function locationFrom(
     id: String(l._id),
     city: l.city,
     location: l.location,
-    type: l.type,
+    ...mediumOf(l),
+    width: l.width ?? null,
+    height: l.height ?? null,
+    sqft: l.sqft ?? null,
     days: l.days,
     status: l.status,
     vendor: vendorById.get(String(l.vendorId)) ?? { id: "", name: "—" },
@@ -234,12 +255,10 @@ function locationFrom(
 /**
  * Resolve every vendor referenced by a page of campaigns, in one query.
  *
- * `userId: null` is the admin all-users view — the campaigns being resolved
- * may belong to different owners, so there's no single userId left to scope
- * by; a vendorId already uniquely identifies one vendor regardless of owner.
+ * Vendors are a shared directory, so there is nothing to scope by — a vendorId
+ * identifies exactly one vendor for every user.
  */
 async function vendorMapFor(
-  userId: string | null,
   rows: { locations: LeanLocation[] }[],
 ): Promise<Map<string, PersonView>> {
   const ids = [
@@ -249,11 +268,7 @@ async function vendorMapFor(
   ];
   if (ids.length === 0) return new Map();
 
-  // Scoped by userId, which re-applies the ownership check .populate() never did.
-  const vendors = await Vendor.find({
-    _id: { $in: ids },
-    ...(userId ? { userId } : {}),
-  })
+  const vendors = await Vendor.find({ _id: { $in: ids } })
     .select("name")
     .lean();
   return new Map(
@@ -263,21 +278,25 @@ async function vendorMapFor(
 
 // ---------------------------------------------------------------- options
 
-export async function getSalesList(userId: string): Promise<PersonView[]> {
+/**
+ * Clients, vendors and sales people are a shared directory — every user picks
+ * from the same list, so none of these take a userId. See models/client.ts.
+ */
+export async function getSalesList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Sales.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Sales.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name, email: r.email }));
 }
 
-export async function getVendorList(userId: string): Promise<PersonView[]> {
+export async function getVendorList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Vendor.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Vendor.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
 }
 
-export async function getClientList(userId: string): Promise<PersonView[]> {
+export async function getClientList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Client.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Client.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
 }
 
@@ -328,20 +347,21 @@ const CAMPAIGN_SORT_FIELDS: Record<CampaignSortKey, string> = {
  * Resolve the reference ids matching a search term, so the campaign pipeline
  * never has to join before paginating.
  *
- * Clients/Sales/Vendors are per-user reference tables of tens to low hundreds
- * of rows, so three indexed {userId, name} lookups are effectively free — and
- * they let the main $match stay a plain indexable query. The alternative
- * ($lookup before $match) would join every campaign of the user before
- * filtering, and vendor names would need the locations array unwound and
- * reassembled.
+ * Clients/Sales/Vendors are shared reference tables of tens to low hundreds of
+ * rows, so three indexed name lookups are effectively free — and they let the
+ * main $match stay a plain indexable query. The alternative ($lookup before
+ * $match) would join every campaign of the user before filtering, and vendor
+ * names would need the locations array unwound and reassembled.
+ *
+ * Resolving names globally doesn't widen the result: the ids only feed an $or
+ * that still sits inside the caller's userId-scoped campaign filter.
  */
-async function buildSearch(userId: string | null, q: string) {
+async function buildSearch(q: string) {
   const rx = searchRegex(q);
-  const scope = userId ? { userId } : {};
   const [clientIds, salesIds, vendorIds] = await Promise.all([
-    Client.find({ ...scope, name: rx }).limit(500).distinct("_id"),
-    Sales.find({ ...scope, name: rx }).limit(500).distinct("_id"),
-    Vendor.find({ ...scope, name: rx }).limit(500).distinct("_id"),
+    Client.find({ name: rx }).limit(500).distinct("_id"),
+    Sales.find({ name: rx }).limit(500).distinct("_id"),
+    Vendor.find({ name: rx }).limit(500).distinct("_id"),
   ]);
 
   return {
@@ -352,7 +372,9 @@ async function buildSearch(userId: string | null, q: string) {
       // did — it joined every location into one searchable string.
       { "locations.location": rx },
       { "locations.city": rx },
+      { "locations.medium": rx },
       { "locations.type": rx },
+      { category: rx },
       { "locations.vendorId": { $in: vendorIds } },
     ],
   };
@@ -367,7 +389,7 @@ async function campaignFilter(
   return {
     ...(userId ? { userId: oid(userId) } : {}),
     ...statusFilters(now)[opts.status ?? "all"],
-    ...(opts.q ? await buildSearch(userId, opts.q) : {}),
+    ...(opts.q ? await buildSearch(opts.q) : {}),
   };
 }
 
@@ -457,6 +479,7 @@ export async function getCampaignsPage(
 
   type Row = {
     _id: Types.ObjectId;
+    category?: string;
     locations: LeanLocation[];
     client?: LeanRef;
     sales?: LeanRef;
@@ -470,13 +493,14 @@ export async function getCampaignsPage(
     Campaign.countDocuments(filter),
   ]);
 
-  const vendorById = await vendorMapFor(userId, rows);
+  const vendorById = await vendorMapFor(rows);
 
   return {
     rows: rows.map((r) => ({
       id: String(r._id),
       client: personFrom(r.client),
       sales: personFrom(r.sales),
+      category: r.category ?? "",
       ...(userId === null ? { owner: personFrom(r.owner) } : {}),
       locations: (r.locations ?? []).map((l) => locationFrom(l, vendorById)),
     })),
@@ -599,7 +623,10 @@ export async function getCampaign(
         id: locationId,
         city: l.city,
         location: l.location,
-        type: l.type,
+        ...mediumOf(l),
+        width: l.width ?? null,
+        height: l.height ?? null,
+        sqft: l.sqft ?? null,
         days: l.days,
         status: l.status,
         vendor: personFrom(l.vendorId as LeanRef),
@@ -622,6 +649,7 @@ export async function getCampaign(
     id: campaignId,
     client: personFrom(r.clientId as LeanRef),
     sales: personFrom(r.salesId as LeanRef),
+    category: r.category ?? "",
     locations,
   };
 }
@@ -632,41 +660,49 @@ export const ENTITY_SORT_KEYS = ["name"] as const;
 export type EntitySortKey = (typeof ENTITY_SORT_KEYS)[number];
 
 /**
+ * These three are a shared directory — the list is the same for every user, so
+ * there is no owner filter here (see models/client.ts).
+ *
  * `count` is deliberately absent from the sort keys. It's computed *after* the
  * page is chosen, so sorting by it would silently order by nothing — it needs
  * a campaign-rooted pipeline instead.
  */
-function entityFilter(userId: string, q?: string) {
-  return { userId, ...(q ? { name: searchRegex(q) } : {}) };
+function entityFilter(q?: string) {
+  return q ? { name: searchRegex(q) } : {};
 }
 
-/** Campaigns-per-entity, for just the ids on the current page. */
+/**
+ * Campaigns-per-entity, for just the ids on the current page.
+ *
+ * Counted across every user's campaigns, not just the viewer's: the number is
+ * what blocks a delete, and a client still referenced by somebody else's
+ * campaign must not look free to remove. Must agree with
+ * countCampaignsUsing() in services.ts.
+ */
 async function countsByRef(
-  userId: string,
   field: "clientId" | "salesId",
   ids: Types.ObjectId[],
 ) {
   if (ids.length === 0) return new Map<string, number>();
   const rows = await Campaign.aggregate<{ _id: Types.ObjectId; n: number }>([
-    { $match: { userId: oid(userId), [field]: { $in: ids } } },
+    { $match: { [field]: { $in: ids } } },
     { $group: { _id: `$${field}`, n: { $sum: 1 } } },
   ]).exec();
   return new Map(rows.map((r) => [String(r._id), r.n]));
 }
 
 export async function getClientsPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<NamedCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Client.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
     Client.countDocuments(filter),
   ]);
 
-  const counts = await countsByRef(userId, "clientId", rows.map((r) => r._id));
+  const counts = await countsByRef("clientId", rows.map((r) => r._id));
 
   return {
     rows: rows.map((r) => ({
@@ -681,18 +717,17 @@ export async function getClientsPage(
 }
 
 export async function getSalesPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<SalesCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Sales.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
     Sales.countDocuments(filter),
   ]);
 
-  const counts = await countsByRef(userId, "salesId", rows.map((r) => r._id));
+  const counts = await countsByRef("salesId", rows.map((r) => r._id));
 
   return {
     rows: rows.map((r) => ({
@@ -708,11 +743,10 @@ export async function getSalesPage(
 }
 
 export async function getVendorsPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<NamedCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Vendor.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
@@ -727,10 +761,11 @@ export async function getVendorsPage(
      * several of its locations share the vendor. $setIntersection dedupes and
      * prunes to this page's ids in one step, so unwinding it emits exactly one
      * row per (campaign, vendor) — without ever expanding the full locations
-     * array. Must agree with countCampaignsUsing() in services.ts.
+     * array. Across every user's campaigns, for the reason in countsByRef().
+     * Must agree with countCampaignsUsing() in services.ts.
      */
     const grouped = await Campaign.aggregate<{ _id: Types.ObjectId; n: number }>([
-      { $match: { userId: oid(userId), "locations.vendorId": { $in: ids } } },
+      { $match: { "locations.vendorId": { $in: ids } } },
       { $project: { v: { $setIntersection: ["$locations.vendorId", ids] } } },
       { $unwind: "$v" },
       { $group: { _id: "$v", n: { $sum: 1 } } },

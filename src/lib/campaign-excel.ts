@@ -6,6 +6,8 @@ import type { OptionView } from "@/lib/view-types";
 
 export type CampaignExcelImport = {
   locations: LocationDraft[];
+  /** Campaign-wide, so it's read once from the sheet rather than per row. */
+  category: string;
   warnings: string[];
   sheetName: string;
 };
@@ -17,7 +19,15 @@ const HEADER_ALIASES = {
   vendor: ["vendor", "vendor name"],
   status: ["status", "stratus"],
   city: ["city"],
-  type: ["type", "media type"],
+  // The media format. Sheets used to call this column "Type"; once they grew a
+  // separate illumination column they renamed it MEDIUM, and `type` below took
+  // over the old name. See the legacy fallback in parseCampaignExcel.
+  medium: ["medium", "media type"],
+  type: ["type", "lighting", "illumination"],
+  width: ["w", "width"],
+  height: ["h", "height"],
+  sqft: ["sqft", "sq ft", "area"],
+  category: ["category"],
   location: ["location", "area", "site", "site location"],
   startDate: ["start date", "start", "from date", "from"],
   // Optional — several sheets don't have this column at all.
@@ -28,7 +38,7 @@ const HEADER_ALIASES = {
 const REQUIRED_FIELDS = [
   "vendor",
   "city",
-  "type",
+  "medium",
   "location",
   "startDate",
   "endDate",
@@ -103,8 +113,10 @@ function findHeaderRow(rows: Row[]) {
 function excelSerialToDate(serial: number) {
   const utcDays = Math.floor(serial - 25569);
   const utcValue = utcDays * 86400;
-  const date = new Date(utcValue * 1000);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  // Already midnight UTC, which is what toDateInputValue reads. Rebuilding it
+  // through the local-time constructor shifted the whole thing a day back east
+  // of Greenwich — an Indian sheet imported every date one day early.
+  return new Date(utcValue * 1000);
 }
 
 function parseDate(value: RowValue) {
@@ -112,12 +124,18 @@ function parseDate(value: RowValue) {
     return toDateInputValue(value);
   }
 
+  // A 0 in a date column means "blank" in every sheet we've seen, but serial 0
+  // is a real date (1899-12-30) — and falling through to the text parsing below
+  // is worse still, since `new Date("0")` lands in 2000. Either way it would be
+  // a bogus date accepted without a warning, so bail out here.
   if (typeof value === "number" && Number.isFinite(value)) {
-    return toDateInputValue(excelSerialToDate(value));
+    return value > 0 ? toDateInputValue(excelSerialToDate(value)) : "";
   }
 
   const raw = text(value).replace(/^'+/, "").replace(/\s+/g, "");
   if (!raw) return "";
+  // Same cell, stored as text rather than a number.
+  if (/^-?\d+(\.\d+)?$/.test(raw) && Number(raw) <= 0) return "";
 
   const cleaned = raw.replace(/[.]/g, "/");
   const dayMonth = cleaned.match(/^(\d{1,2})[-/ ]([a-zA-Z]{3,})$/);
@@ -126,11 +144,13 @@ function parseDate(value: RowValue) {
     const month = MONTHS.get(dayMonth[2].slice(0, 4).toLowerCase());
     const year = new Date().getFullYear();
     if (month !== undefined) {
-      const date = new Date(year, month, day);
+      // UTC throughout — see excelSerialToDate. The round-trip check also has
+      // to read UTC, or it rejects valid dates in a negative-offset zone.
+      const date = new Date(Date.UTC(year, month, day));
       if (
-        date.getFullYear() === year &&
-        date.getMonth() === month &&
-        date.getDate() === day
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month &&
+        date.getUTCDate() === day
       ) {
         return toDateInputValue(date);
       }
@@ -142,11 +162,11 @@ function parseDate(value: RowValue) {
     const day = Number(parts[1]);
     const month = Number(parts[2]);
     const year = Number(parts[3].length === 2 ? `20${parts[3]}` : parts[3]);
-    const date = new Date(year, month - 1, day);
+    const date = new Date(Date.UTC(year, month - 1, day));
     if (
-      date.getFullYear() === year &&
-      date.getMonth() === month - 1 &&
-      date.getDate() === day
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
     ) {
       return toDateInputValue(date);
     }
@@ -165,12 +185,31 @@ function normalizeStatus(value: RowValue) {
   return "LIVE";
 }
 
+/**
+ * A dimension cell as the form holds it — a string. Blank and non-numeric cells
+ * both become "", so a stray "N/A" never lands in a number field.
+ *
+ * 0 is treated as blank too: no site is zero feet wide, and the sheet's SQFT
+ * column is a `= W * H` formula that yields 0 on every row where W and H are
+ * empty. Importing those as a literal 0 would fill the form with false data.
+ */
+function numberText(value: RowValue) {
+  const raw = text(value);
+  if (!raw) return "";
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? String(n) : "";
+}
+
 function emptyImportLocation(): LocationDraft {
   return {
     city: "",
     location: "",
-    type: "",
+    medium: "",
     vendorId: "",
+    type: "",
+    width: "",
+    height: "",
+    sqft: "",
     startDate: "",
     midDate: "",
     endDate: "",
@@ -213,11 +252,22 @@ export async function parseCampaignExcel(
   if (!selected || selected.header.score < 4) {
     return {
       locations: [],
+      category: "",
       warnings: [
-        "Could not find enough columns. Expected Vendor, City, Type, Location, Start date and End date.",
+        "Could not find enough columns. Expected Vendor, City, Medium, Location, Start date and End date.",
       ],
       sheetName: "",
     };
+  }
+
+  // Older sheets carry the media format in a column called "Type" and have no
+  // MEDIUM at all. Read that column as the medium, and leave illumination
+  // unset — otherwise every sheet written before the rename imports with a
+  // blank medium and "Billboard" filed as its lighting.
+  const columns = selected.header.columns;
+  if (!columns.has("medium") && columns.has("type")) {
+    columns.set("medium", columns.get("type")!);
+    columns.delete("type");
   }
 
   const missingHeaders = REQUIRED_FIELDS.filter(
@@ -228,6 +278,9 @@ export async function parseCampaignExcel(
   }
 
   const locations: LocationDraft[] = [];
+  // Campaign-wide: the first row that fills it in wins, and the rest of the
+  // column is ignored rather than warned about — the sheet repeats one value.
+  let category = "";
   const dataRows = selected.rows.slice(selected.header.index + 1);
 
   dataRows.forEach((row, rowIndex) => {
@@ -240,11 +293,21 @@ export async function parseCampaignExcel(
     const endDate = parseDate(getCell(row, selected!.header.columns, "endDate"));
     const vendorId = vendorByName.get(normalize(vendorName)) ?? "";
 
+    const width = numberText(getCell(row, selected!.header.columns, "width"));
+    const height = numberText(getCell(row, selected!.header.columns, "height"));
+    // The sheet computes SQFT with `= W * H`, so the parsed cell already holds
+    // the product. Derive it only when the column is absent or blank.
+    const sqft = numberText(getCell(row, selected!.header.columns, "sqft"));
+
     const location: LocationDraft = {
       ...emptyImportLocation(),
       city: text(getCell(row, selected!.header.columns, "city")),
       location: text(getCell(row, selected!.header.columns, "location")),
+      medium: text(getCell(row, selected!.header.columns, "medium")),
       type: text(getCell(row, selected!.header.columns, "type")),
+      width,
+      height,
+      sqft: sqft || (width && height ? String(Number(width) * Number(height)) : ""),
       vendorId,
       startDate,
       midDate,
@@ -255,18 +318,22 @@ export async function parseCampaignExcel(
     const hasUsefulData =
       location.city ||
       location.location ||
-      location.type ||
+      location.medium ||
       vendorName ||
       startDate ||
       endDate;
     if (!hasUsefulData) return;
+
+    if (!category) {
+      category = text(getCell(row, selected!.header.columns, "category"));
+    }
 
     if (vendorName && !vendorId) {
       warnings.push(`Row ${excelRow}: vendor "${vendorName}" is not in vendors yet.`);
     }
     if (!location.city) warnings.push(`Row ${excelRow}: city is empty.`);
     if (!location.location) warnings.push(`Row ${excelRow}: location is empty.`);
-    if (!location.type) warnings.push(`Row ${excelRow}: type is empty.`);
+    if (!location.medium) warnings.push(`Row ${excelRow}: medium is empty.`);
     if (!startDate) warnings.push(`Row ${excelRow}: start date is missing or invalid.`);
     if (!endDate) warnings.push(`Row ${excelRow}: end date is missing or invalid.`);
     if (startDate && endDate && endDate < startDate) {
@@ -280,5 +347,5 @@ export async function parseCampaignExcel(
     warnings.push("No campaign location rows were found in the selected sheet.");
   }
 
-  return { locations, warnings, sheetName: selected.sheetName };
+  return { locations, category, warnings, sheetName: selected.sheetName };
 }

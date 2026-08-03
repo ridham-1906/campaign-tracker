@@ -24,7 +24,9 @@ type LocationLike = {
   _id: unknown;
   city: string;
   location: string;
-  type: string;
+  medium?: string;
+  /** Pre-rename documents keep the media format here. */
+  type?: string;
   status: string;
   endDate: Date;
   reminderDate: Date;
@@ -92,7 +94,7 @@ export async function POST(req: Request, { params }: Params) {
         locations: targets.map((l) => ({
           location: l.location,
           city: l.city,
-          type: l.type,
+          medium: l.medium ?? l.type ?? "",
           endDate: new Date(l.endDate),
           daysLeft: Math.max(0, daysUntil(new Date(l.endDate))),
         })),

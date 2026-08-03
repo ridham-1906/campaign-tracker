@@ -49,7 +49,7 @@ export const expiryReminders: ReminderKind = {
       locations: locations.map((l) => ({
         location: l.location,
         city: l.city,
-        type: l.type,
+        medium: l.medium,
         endDate: new Date(l.endDate),
         daysLeft: Math.max(0, daysUntil(new Date(l.endDate), now)),
       })),
