@@ -545,10 +545,13 @@ export function CampaignForm({
           <div className="space-y-3">
             {mode === "renew" && (
               <p className="rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-                Client, sales person and every placement have been carried over.
-                Each new term is suggested to start the day after the last one
-                ended, keeping its original length — adjust anything below
-                before creating the renewal.
+                This updates the same campaign rather than creating a second
+                one. The dates it is running on now are archived as a past term,
+                and its photos stay put — tagged with the term they were taken
+                under. Each new term is suggested to start the day after the
+                last one ended, keeping its original length. A placement you
+                remove here simply isn&apos;t rebooked: it keeps its photos and
+                stops drawing reminders.
               </p>
             )}
 
@@ -775,7 +778,7 @@ export function CampaignForm({
               : mode === "edit"
                 ? "Save changes"
                 : mode === "renew"
-                  ? "Create renewal"
+                  ? "Renew campaign"
                   : "Create campaign"}
           </Button>
         ) : (

@@ -17,6 +17,7 @@ import {
   useCampaignStatsQuery,
   useCampaignsQuery,
   useDeleteCampaign,
+  useRenewCampaign,
   useSaveCampaign,
   useSendReminder,
 } from "@/lib/queries/campaigns";
@@ -114,10 +115,10 @@ function toDraft(c: CampaignRow): CampaignDraft {
 const MS_PER_DAY = 86_400_000;
 
 /**
- * A renewal is a *new* campaign that reuses an existing one's client, sales
- * person and placements — only the dates move. Location ids are deliberately
- * dropped so the server inserts fresh subdocuments: the campaign being renewed
- * (and its photos) is left completely untouched.
+ * A renewal moves the *same* campaign into its next booking term — it does not
+ * write a second one. Location ids are therefore kept, not dropped: the server
+ * archives the outgoing dates against those ids, and every photo already
+ * uploaded stays on the campaign, tagged with the term it was taken under.
  *
  * Each location is shifted on its own, keeping its original length, so a
  * campaign whose placements ran to different end dates renews as the same
@@ -144,6 +145,7 @@ function renewalDraft(c: CampaignRow): CampaignDraft {
       const shift = Math.round((start.getTime() - oldStart.getTime()) / MS_PER_DAY);
 
       return {
+        id: l.id,
         city: l.city,
         location: l.location,
         medium: l.medium,
@@ -199,6 +201,7 @@ export function CampaignManager({
   const stats = statsQuery.data;
 
   const saveCampaign = useSaveCampaign();
+  const renewCampaign = useRenewCampaign();
   const deleteCampaign = useDeleteCampaign();
   const sendReminderMutation = useSendReminder();
 
@@ -240,17 +243,53 @@ export function CampaignManager({
     setOpen(true);
   }, []);
 
-  /** Prefill a brand-new campaign from an existing one — see renewalDraft(). */
+  /** Roll the campaign into its next term, in place — see renewalDraft(). */
   const openRenew = useCallback((c: CampaignRow) => {
-    // No editingId: this saves as a create, leaving the original in place.
-    setEditingId(null);
+    // The id is kept: a renewal updates this campaign rather than writing a
+    // second one, so its photos and history stay with it.
+    setEditingId(c.id);
     setMode("renew");
     setDraft(renewalDraft(c));
     setFormNonce((n) => n + 1);
     setOpen(true);
   }, []);
 
+  /** The location fields as both endpoints want them. */
+  function locationPayload(l: LocationDraft) {
+    return {
+      ...(l.id ? { id: l.id } : {}),
+      city: l.city,
+      location: l.location,
+      medium: l.medium,
+      // Sent as the raw input strings — the API's zod schema coerces them and
+      // turns "" into "not set" rather than 0.
+      type: l.type,
+      width: l.width,
+      height: l.height,
+      sqft: l.sqft,
+      vendorId: l.vendorId,
+      startDate: l.startDate,
+      midDate: l.midDate,
+      endDate: l.endDate,
+      status: l.status,
+    };
+  }
+
+  // Closing the dialog is a local UI concern, so it stays here — and only
+  // fires on success, leaving the form intact if the write failed.
+  const closeOnSuccess = { onSuccess: () => setOpen(false) };
+
   function save() {
+    const locations = draft.locations.map(locationPayload);
+
+    // A renewal is neither a create nor a PATCH: it archives the current term
+    // and restarts the reminder series, and it must not apply PATCH's
+    // "anything omitted is deleted" rule to locations that weren't rebooked.
+    if (mode === "renew" && editingId) {
+      renewCampaign.mutate({ id: editingId, locations }, closeOnSuccess);
+      return;
+    }
+
     saveCampaign.mutate(
       {
         id: editingId,
@@ -258,28 +297,10 @@ export function CampaignManager({
           clientId: draft.clientId,
           salesId: draft.salesId,
           category: draft.category,
-          locations: draft.locations.map((l) => ({
-            ...(l.id ? { id: l.id } : {}),
-            city: l.city,
-            location: l.location,
-            medium: l.medium,
-            // Sent as the raw input strings — the API's zod schema coerces them
-            // and turns "" into "not set" rather than 0.
-            type: l.type,
-            width: l.width,
-            height: l.height,
-            sqft: l.sqft,
-            vendorId: l.vendorId,
-            startDate: l.startDate,
-            midDate: l.midDate,
-            endDate: l.endDate,
-            status: l.status,
-          })),
+          locations,
         },
       },
-      // Closing the dialog is a local UI concern, so it stays here — and only
-      // fires on success, leaving the form intact if the write failed.
-      { onSuccess: () => setOpen(false) },
+      closeOnSuccess,
     );
   }
 
@@ -323,8 +344,16 @@ export function CampaignManager({
         id: "client",
         accessorFn: (c) => c.client.name,
         header: "Client",
-        cell: ({ getValue }) => (
-          <span className="font-medium">{getValue<string>()}</span>
+        cell: ({ row, getValue }) => (
+          <span className="flex items-center gap-1.5">
+            <span className="font-medium">{getValue<string>()}</span>
+            {/* Only worth the space once a campaign has actually been renewed. */}
+            {row.original.term > 1 && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                Term {row.original.term}
+              </span>
+            )}
+          </span>
         ),
       },
       {
@@ -698,7 +727,7 @@ export function CampaignManager({
             draft={draft}
             setDraft={setDraft}
             mode={mode}
-            saving={saveCampaign.isPending}
+            saving={saveCampaign.isPending || renewCampaign.isPending}
             onSubmit={save}
             onCancel={() => setOpen(false)}
           />

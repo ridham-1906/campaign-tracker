@@ -35,12 +35,24 @@ User (login / backend person)
  ├─ Sales   (name, email)        ← reminder recipients
  ├─ Vendor  (name)
  ├─ Client  (name)
- ├─ Campaign (clientId, salesId, category)
- │    └─ locations[]  (embedded: city, location, medium, vendorId,
- │                     type, width, height, sqft,
- │                     startDate, endDate, days, status, reminder fields)
- └─ Attachment (campaignId, locationId, kind, stage, fileId, …)
+ ├─ Campaign (clientId, salesId, category, term)
+ │    ├─ locations[]     (embedded: city, location, medium, vendorId,
+ │    │                   type, width, height, sqft,
+ │    │                   startDate, endDate, days, status, reminder fields)
+ │    └─ termHistory[]   (embedded: term, renewedAt, per-location dates)
+ └─ Attachment (campaignId, locationId, term, kind, stage, fileId, …)
 ```
+
+**A renewal is a new term, not a new campaign.** Renewing used to `create` a
+second campaign that duplicated the client, the sales person and every location
+with nothing linking the two. It now updates the campaign in place: the dates it
+was running on are archived into `termHistory`, `term` goes up by one, and the
+locations take the new dates. Attachments carry the `term` they were uploaded
+under, so each period's photos stay separate on the one campaign — that pairing
+is the whole reason the clone had to go. A location that isn't rebooked keeps
+its dates and its photos and drops to `ENDED`; removing it outright is a normal
+edit, which cascades the attachment deletes. See `renewCampaignForUser` in
+[`src/lib/services.ts`](../src/lib/services.ts).
 
 `medium` is the media format (Billboard, Gantry, LED…) and `type` is the
 illumination (Lit / Nonlit) — they mirror the MEDIUM and TYPE columns of the
@@ -55,9 +67,10 @@ render.
 | `Sales` | name, email, userId *(creator only — shared directory)* |
 | `Vendor` | name, userId *(creator only — shared directory)* |
 | `Client` | name, userId *(creator only — shared directory)* |
-| `Campaign` | userId, clientId, salesId, category, locations[] |
+| `Campaign` | userId, clientId, salesId, category, term, locations[], termHistory[] |
+| *(embedded)* term | term, renewedAt, locations[] (locationId, startDate, midDate, endDate, days) |
 | *(embedded)* location | city, location, medium, vendorId, type, width, height, sqft, startDate, endDate, days, status (`LIVE`/`ENDED`/`PENDING_CREATIVE`), reminderDate, reminderSent, reminderSentAt, creativeReminderSentAt |
-| `Attachment` | userId, campaignId, locationId, kind, stage, fileId, filename, mimeType, size, uploadedAt |
+| `Attachment` | userId, campaignId, locationId, term, kind, stage, fileId, filename, mimeType, size, uploadedAt |
 
 Models are defined under [`src/models/`](../src/models/) and barrelled through
 [`src/models/index.ts`](../src/models/index.ts).

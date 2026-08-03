@@ -113,6 +113,8 @@ function personFrom(ref: LeanRef): PersonView {
 
 type LeanAttachment = {
   _id: unknown;
+  /** Absent on anything uploaded before renewals were tracked — reads as 1. */
+  term?: number | null;
   kind: string;
   stage?: string | null;
   imageTypeId?: unknown;
@@ -138,6 +140,7 @@ export function attachmentViewFrom(
   const imageTypeName = imageTypeId ? imageTypeById?.get(imageTypeId) : undefined;
   return {
     id: String(a._id),
+    term: a.term ?? 1,
     kind: a.kind as AttachmentView["kind"],
     stage: (a.stage ?? null) as AttachmentView["stage"],
     imageType:
@@ -480,6 +483,7 @@ export async function getCampaignsPage(
   type Row = {
     _id: Types.ObjectId;
     category?: string;
+    term?: number;
     locations: LeanLocation[];
     client?: LeanRef;
     sales?: LeanRef;
@@ -501,6 +505,7 @@ export async function getCampaignsPage(
       client: personFrom(r.client),
       sales: personFrom(r.sales),
       category: r.category ?? "",
+      term: r.term ?? 1,
       ...(userId === null ? { owner: personFrom(r.owner) } : {}),
       locations: (r.locations ?? []).map((l) => locationFrom(l, vendorById)),
     })),
@@ -650,6 +655,18 @@ export async function getCampaign(
     client: personFrom(r.clientId as LeanRef),
     sales: personFrom(r.salesId as LeanRef),
     category: r.category ?? "",
+    term: r.term ?? 1,
+    termHistory: (r.termHistory ?? []).map((t) => ({
+      term: t.term,
+      renewedAt: new Date(t.renewedAt ?? Date.now()).toISOString(),
+      locations: (t.locations ?? []).map((l) => ({
+        locationId: String(l.locationId),
+        startDate: new Date(l.startDate).toISOString(),
+        midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
+        endDate: new Date(l.endDate).toISOString(),
+        days: l.days,
+      })),
+    })),
     locations,
   };
 }

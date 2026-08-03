@@ -101,13 +101,22 @@ Click a campaign row (the client name) to open its detail page:
 - **Send reminder now** — immediately emails the sales person about this
   campaign's expiry, without waiting for the scheduled date. Marks the reminder
   as sent.
-- **Renew** — books the next term without retyping it. Opens **New campaign**
-  with the client, sales person and every placement already filled in, and jumps
-  straight to the dates. Each location is suggested to start the day after it
-  last ended (or today, if that's already past) and to run for the same length
-  as before; change any of them before saving. The campaign you renewed is left
-  exactly as it was — the renewal is saved as a separate campaign, with no
-  photos carried over.
+- **Renew** — books the next term without retyping it, **on the same campaign**.
+  It opens with the client, sales person and every placement already filled in
+  and jumps straight to the dates. Each location is suggested to start the day
+  after it last ended (or today, if that's already past) and to run for the same
+  length as before; change any of them before saving.
+
+  You do **not** get a second row in the list. The campaign moves to *Term 2*
+  (then 3, and so on — the number shows next to the client name), and the dates
+  it was just running on are kept as a past term. Photos stay with the campaign
+  and are filed under the term they were taken in, so this period's installation
+  shots never get mixed up with last period's.
+
+  A placement you remove during a renewal simply isn't rebooked: it keeps its
+  dates and its photos and stops drawing reminders. To delete a placement and
+  its photos for good, use **Edit** instead. Placements you add join from the
+  new term on.
 - **Delete** — removes the campaign and its reminder.
 
 ## 6. How reminders reach sales people

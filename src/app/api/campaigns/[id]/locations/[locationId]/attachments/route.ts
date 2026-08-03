@@ -98,6 +98,10 @@ export async function POST(req: Request, { params }: Params) {
       userId: auth.session.userId,
       campaignId: found.campaign._id,
       locationId: found.location._id,
+      // Stamped at upload time, not read through the campaign later: renewing
+      // moves the campaign on to the next term, and this photo documents the
+      // one it was actually taken under.
+      term: found.campaign.term ?? 1,
       kind: parsed.data.kind,
       stage: imageType?.role ?? null,
       imageTypeId: imageType?._id ?? null,

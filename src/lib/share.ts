@@ -103,7 +103,11 @@ export async function getSharePreview(
 
   let fileCount = 0;
   const locations: LocationPreview[] = campaign.locations.map((l) => {
-    fileCount += l.attachments.length;
+    // Only the term the campaign is running now. A renewal keeps every past
+    // term's photos on the same campaign, and a client following a share link
+    // wants the current booking — not last year's installation shots mixed in.
+    const current = l.attachments.filter((a) => a.term === campaign.term);
+    fileCount += current.length;
     return {
       id: l.id,
       city: l.city,
@@ -118,7 +122,7 @@ export async function getSharePreview(
       endDate: l.endDate,
       // Re-pointed at the token-gated route: the session-gated URLs the read
       // layer builds would 401 for the very person this page is for.
-      attachments: l.attachments.map((a) => ({
+      attachments: current.map((a) => ({
         ...a,
         url: shareFileUrl(token, a.id),
       })),

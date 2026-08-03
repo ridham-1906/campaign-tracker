@@ -241,6 +241,16 @@ Rules:
 {
   "id": "…",
   "category": "Retail",
+  "term": 2,
+  "termHistory": [
+    {
+      "term": 1,
+      "renewedAt": "…",
+      "locations": [
+        { "locationId": "…", "startDate": "…", "midDate": null, "endDate": "…", "days": 30 }
+      ]
+    }
+  ],
   "client": { "id": "…", "name": "Zenith Retail" },
   "sales":  { "id": "…", "name": "Ravi Kumar", "email": "ravi@company.com" },
   "locations": [
@@ -260,7 +270,8 @@ Rules:
 ```
 
 List rows (`GET /api/campaigns`) use the same shape minus
-`locations[].attachments`.
+`locations[].attachments` and `termHistory` — the row shows the current `term`,
+not the archive.
 
 ### Update (PATCH) examples
 
@@ -278,6 +289,27 @@ curl -b cookies.txt -X PATCH http://localhost:3000/api/campaigns/<id> \
   -H "Content-Type: application/json" \
   -d '{"locations":[{"id":"<loc id>","city":"Mumbai","location":"Bandra","medium":"Billboard","vendorId":"<vendor id>","type":"Lit","width":20,"height":10,"sqft":200,"startDate":"2026-07-10","midDate":"","endDate":"2026-08-10","status":"LIVE"}]}'
 ```
+
+### Renew (next term)
+
+```bash
+curl -b cookies.txt -X POST http://localhost:3000/api/campaigns/<id>/renew \
+  -H "Content-Type: application/json" \
+  -d '{"locations":[{"id":"<loc id>","city":"Mumbai","location":"Bandra","medium":"Billboard","vendorId":"<vendor id>","startDate":"2026-09-10","midDate":"","endDate":"2026-10-10"}]}'
+```
+
+Renewing **updates this campaign** — it never creates a second one. The dates it
+is currently running on are archived into `termHistory`, `term` goes up by one,
+and the locations take the new dates with a freshly restarted reminder series.
+
+Unlike `PATCH`, a location left out of the body is **not** deleted: it simply
+wasn't rebooked, so it keeps its dates and its photos and drops to `ENDED`.
+Locations may be added (they join from this term on) but can only be removed via
+`PATCH`, which cascades their attachment deletes properly.
+
+Responds with the full `CampaignView`, including the new `term` and
+`termHistory`. Every attachment carries the `term` it was uploaded under, so
+past periods' photos stay on the campaign and stay distinguishable.
 
 ### Send reminder now
 

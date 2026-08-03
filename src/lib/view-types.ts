@@ -10,6 +10,8 @@ export type PersonView = { id: string; name: string; email?: string };
 
 export type AttachmentView = {
   id: string;
+  /** Which booking term this file documents. 1 for everything pre-renewals. */
+  term: number;
   kind: AttachmentKind;
   stage: AttachmentStage | null;
   /** The user-managed image type this photo was tagged with — null for
@@ -46,24 +48,42 @@ export type LocationView = {
   attachments: AttachmentView[];
 };
 
+/** One archived booking period — see models/campaign-term.ts. */
+export type CampaignTermView = {
+  term: number;
+  renewedAt: string; // ISO
+  locations: {
+    locationId: string;
+    startDate: string; // ISO
+    midDate: string | null; // ISO
+    endDate: string; // ISO
+    days: number;
+  }[];
+};
+
 export type CampaignView = {
   id: string;
   client: PersonView;
   sales: PersonView;
   /** Campaign-wide classification. `""` when never filled in. */
   category: string;
+  /** Current booking period. 1 until the campaign is first renewed. */
+  term: number;
+  /** Past periods, oldest first. Empty until the first renewal. */
+  termHistory: CampaignTermView[];
   locations: LocationView[];
 };
 
 /**
  * A campaign as it appears in the paginated list. Attachments are omitted:
  * the campaigns table has no attachment column, and carrying them was roughly
- * half the payload. The detail endpoint (`GET /api/campaigns/:id`) still
- * returns the full `CampaignView`.
+ * half the payload. `termHistory` is left out for the same reason — the row
+ * shows the current `term`, not the archive. The detail endpoint
+ * (`GET /api/campaigns/:id`) still returns the full `CampaignView`.
  */
 export type CampaignListLocationView = Omit<LocationView, "attachments">;
 
-export type CampaignListView = Omit<CampaignView, "locations"> & {
+export type CampaignListView = Omit<CampaignView, "locations" | "termHistory"> & {
   locations: CampaignListLocationView[];
   /** Only present when an admin account is viewing every user's campaigns —
    * absent for a normal, single-user query. */

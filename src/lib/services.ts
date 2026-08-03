@@ -251,6 +251,94 @@ export async function updateCampaignForUser(
   return campaign;
 }
 
+/**
+ * Roll a campaign into its next booking period, in place.
+ *
+ * This used to be a plain `create` from a prefilled form, which left a second
+ * campaign row duplicating the client, sales person and every location, with
+ * nothing tying the two together. Now the campaign is the durable thing and the
+ * *term* is what repeats: the dates it has been running on are archived into
+ * `termHistory`, `term` goes up by one, and the locations take the new dates.
+ *
+ * Photos are not touched. Each attachment already carries the term it was
+ * uploaded under, so last period's installation shots stay attached to the
+ * campaign and stay distinguishable from this period's — which is the whole
+ * reason renewing no longer clones anything.
+ *
+ * Locations may be added but never removed here: a location that disappeared
+ * would orphan the attachments and history entries pointing at its subdocument
+ * id. Dropping a site is a normal edit, which cascades those deletes properly.
+ */
+export async function renewCampaignForUser(
+  userId: string,
+  id: string,
+  input: { locations: LocationInput[] },
+) {
+  if (!isValidId(id)) return null;
+  await connectDB();
+
+  const campaign = await Campaign.findOne({ _id: id, userId });
+  if (!campaign) return null;
+
+  const term = campaign.term ?? 1;
+
+  // Snapshot what the outgoing term ran on before the dates are overwritten.
+  campaign.termHistory.push({
+    term,
+    renewedAt: new Date(),
+    locations: campaign.locations.map((l) => ({
+      locationId: l._id,
+      startDate: l.startDate,
+      midDate: l.midDate ?? null,
+      endDate: l.endDate,
+      days: l.days,
+    })),
+  } as never);
+  campaign.term = term + 1;
+
+  // Ids that are part of the new term — collected as we go so a location added
+  // during the renewal (which only gets its _id on push) counts as renewed.
+  const renewedIds = new Set<string>();
+
+  for (const incoming of input.locations) {
+    // A brand-new site joining from this term on.
+    if (!incoming.id) {
+      const added = campaign.locations[
+        campaign.locations.push(buildLocation(incoming) as never) - 1
+      ];
+      renewedIds.add(String(added._id));
+      continue;
+    }
+
+    const existing = campaign.locations.find(
+      (l) => String(l._id) === incoming.id,
+    );
+    if (!existing) continue; // id we don't own — ignore rather than resurrect
+
+    // A renewal is a fresh booking, so the reminder series restarts outright:
+    // no `sameEnd` carry-over the way an edit has, and nothing about the last
+    // term's sends should suppress this term's.
+    Object.assign(existing, buildLocation(incoming), {
+      reminderSent: false,
+      reminderSentAt: null,
+      creativeReminderSentAt: null,
+    });
+    renewedIds.add(String(existing._id));
+  }
+
+  // A site the form didn't send wasn't rebooked. It keeps its previous dates
+  // and its photos — deleting it is a normal edit, not a renewal — but it drops
+  // out of the live set so it stops drawing reminders.
+  for (const existing of campaign.locations) {
+    if (!renewedIds.has(String(existing._id))) {
+      existing.status = "ENDED";
+    }
+  }
+
+  await campaign.save();
+  return campaign;
+}
+
 /** Load a campaign and one of its locations, scoped to the owning user. */
 export async function findOwnedLocation(
   userId: string,

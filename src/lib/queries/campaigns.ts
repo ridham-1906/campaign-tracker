@@ -121,6 +121,35 @@ export function useSaveCampaign() {
   });
 }
 
+/**
+ * Renewal is an update of the existing campaign, not a second one. It gets its
+ * own hook because the endpoint differs and because it can change which photos
+ * are on screen — every gallery is now scoped to a term, and a renewal starts
+ * a new one.
+ */
+export function useRenewCampaign() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      locations,
+    }: {
+      id: string;
+      locations: LocationPayload[];
+    }) =>
+      apiJson<CampaignView>(`/api/campaigns/${id}/renew`, {
+        method: "POST",
+        body: JSON.stringify({ locations }),
+      }),
+    onSuccess: (data) => {
+      toast.success(`Renewed — now on term ${data.term}`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.images.all });
+    },
+  });
+}
+
 export function useDeleteCampaign() {
   const queryClient = useQueryClient();
 
