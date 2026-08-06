@@ -12,7 +12,7 @@
 // structurally validated (every relationship/override resolves, every XML
 // part is well-formed) before porting here.
 import { PHOTO_TYPE_LABELS, type AttachmentStage } from "@/lib/attachments";
-import type { AttachmentView, LocationView } from "@/lib/view-types";
+import type { AttachmentView, LocationPreview } from "@/lib/view-types";
 import { formatDate } from "@/lib/campaign";
 
 const TEMPLATE_URL = "/Execution PPT Outdoor.pptx";
@@ -31,7 +31,7 @@ const SLIDE_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 
 export type LocationExportEntry = {
-  location: LocationView;
+  location: LocationPreview;
   /** Already filtered to the chosen photo-type(s) and guaranteed non-empty —
    * the caller drops any location with no match rather than handing it here. */
   photos: AttachmentView[];
@@ -139,21 +139,12 @@ function fitContain(cell: Rect, aspect: number): Rect {
 function buildLocationSlideXml(params: {
   header: string;
   mediaType: string;
-  vendorName: string;
   dateFieldLabel: string;
   dateValueLabel: string;
   photoTypeLabel: string;
   photo: { rId: string; aspect: number };
 }): string {
-  const {
-    header,
-    mediaType,
-    vendorName,
-    dateFieldLabel,
-    dateValueLabel,
-    photoTypeLabel,
-    photo,
-  } = params;
+  const { header, mediaType, dateFieldLabel, dateValueLabel, photoTypeLabel, photo } = params;
   const rect = fitContain(PHOTO_BOX, photo.aspect);
 
   const pic =
@@ -198,14 +189,11 @@ function buildLocationSlideXml(params: {
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"><a:solidFill><a:srgbClr val="FCF7F3"/></a:solidFill></a:rPr><a:t>${escapeXml(header)}</a:t></a:r></a:p></a:txBody>` +
     `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"><a:solidFill><a:schemeClr val="dk1"/></a:solidFill></a:tcPr></a:tc>` +
     `<a:tc hMerge="1"/></a:tr>` +
-    `<a:tr h="371475"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
+    `<a:tr h="371475"><a:tc gridSpan="2"><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>Media Type : </a:t></a:r>` +
     `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(mediaType)}</a:t></a:r></a:p></a:txBody>` +
     `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"/></a:tc>` +
-    `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
-    `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>Vendor : </a:t></a:r>` +
-    `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(vendorName)}</a:t></a:r></a:p></a:txBody>` +
-    `<a:tcPr marT="91425" marB="91425" marR="91425" marL="91425"/></a:tc></a:tr>` +
+    `<a:tc hMerge="1"/></a:tr>` +
     `<a:tr h="371475"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>` +
     `<a:r><a:rPr b="1" lang="en-US" sz="1600"/><a:t>${escapeXml(dateFieldLabel)} : </a:t></a:r>` +
     `<a:r><a:rPr lang="en-US" sz="1600"/><a:t>${escapeXml(dateValueLabel)}</a:t></a:r></a:p></a:txBody>` +
@@ -235,13 +223,12 @@ function photoTypeLabelOf(photo: AttachmentView): string {
   return photo.photoType ? PHOTO_TYPE_LABELS[photo.photoType] : "Other";
 }
 
-/** Renders a location's header/media/vendor fields the way the table cells
- * expect them, given only what LocationView actually carries. */
-function locationFields(location: LocationView) {
+/** Renders a location's header/media fields the way the table cells expect
+ * them, given only what a location preview actually carries. */
+function locationFields(location: LocationPreview) {
   return {
-    header: `${location.location} · ${location.city}`,
-    mediaType: location.type,
-    vendorName: location.vendor.name,
+    header: `${location.city} · ${location.location}`,
+    mediaType: location.medium,
   };
 }
 
@@ -257,7 +244,7 @@ const STAGE_DATE_FIELD_LABELS: Record<AttachmentStage, string> = {
 /** Which of the location's three dates belongs on this photo's slide — keyed
  * off the photo's own stage, not a fixed per-location value, since a single
  * location's photos can span all three stages across their own slides. */
-function dateRowFor(photo: AttachmentView, location: LocationView) {
+function dateRowFor(photo: AttachmentView, location: LocationPreview) {
   const stage = photo.stage ?? "installation"; // untagged/legacy photos: preserve prior behavior
   const raw =
     stage === "installation"

@@ -23,9 +23,24 @@ export const attachmentSchema = new Schema({
    * so a location's _id survives edits.
    */
   locationId: { type: Schema.Types.ObjectId, required: true },
+  /**
+   * The campaign's `term` at upload time — which booking period this photo
+   * documents. Renewing a campaign no longer clones it, so without this every
+   * term's installation shots would pile into one undifferentiated gallery.
+   * Defaults to 1, which is exactly right for everything uploaded before
+   * renewals were tracked.
+   */
+  term: { type: Number, default: 1 },
 
   kind: { type: String, enum: ATTACHMENT_KINDS, required: true },
+  // `stage` is derived from imageTypeId's role at write time (installation/
+  // mid_date/end_date for the three canonical types, null for a custom one)
+  // and kept as its own field so stage-dependent logic (browsing buckets, the
+  // PPT export's Start/Mid/End Date labeling) doesn't need to join through
+  // ImageType on every read.
   stage: { type: String, enum: ATTACHMENT_STAGES, default: null },
+  // The user-managed type this photo was tagged with — see models/image-type.ts.
+  imageTypeId: { type: Schema.Types.ObjectId, ref: "ImageType", default: null },
   // Set for images only, alongside `stage` — what the photo actually shows.
   photoType: { type: String, enum: PHOTO_TYPES, default: null },
   fileId: { type: String, required: true },
@@ -38,8 +53,9 @@ export const attachmentSchema = new Schema({
 // The images list, which groups a user's files by campaign. Holding uploadedAt
 // keeps its $max covered, so the group never fetches a document.
 attachmentSchema.index({ userId: 1, campaignId: 1, uploadedAt: -1 });
-// The campaign detail view, and both cascade-delete paths.
-attachmentSchema.index({ campaignId: 1, locationId: 1 });
+// The campaign detail view, and both cascade-delete paths. `term` rides along
+// so the per-term gallery filter is covered by the same index.
+attachmentSchema.index({ campaignId: 1, locationId: 1, term: 1 });
 
 export type AttachmentDoc = InferSchemaType<typeof attachmentSchema> & {
   _id: Types.ObjectId;

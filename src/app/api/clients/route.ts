@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     sortKeys: ENTITY_SORT_KEYS,
     defaultSort: "name",
   });
-  return ok(await getClientsPage(auth.session.userId, params));
+  return ok(await getClientsPage(params));
 }
 
 export async function POST(req: Request) {

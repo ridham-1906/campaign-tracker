@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { connectDB } from "@/lib/db";
 import { User } from "@/models";
-import { createSession, destroySession, verifyPassword } from "@/lib/auth";
+import { createSession, destroySession, isAdminEmail, verifyPassword } from "@/lib/auth";
 
 const loginSchema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -35,6 +35,7 @@ export async function loginAction(
     userId: user._id.toString(),
     name: user.name,
     email: user.email,
+    isAdmin: isAdminEmail(user.email),
   });
   redirect("/");
 }

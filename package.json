@@ -10,6 +10,7 @@
     "reminders": "tsx --conditions=react-server --env-file=.env scripts/run-reminders.ts",
     "clone-prod": "tsx --env-file=.env scripts/clone-prod-to-local.ts",
     "migrate": "tsx --conditions=react-server --env-file=.env scripts/migrate-reminders.ts",
+    "migrate:medium": "tsx --conditions=react-server --env-file=.env scripts/migrate-medium.ts",
     "check:attachments": "tsx --env-file=.env scripts/check-attachments.ts"
   },
   "dependencies": {

@@ -1,15 +1,10 @@
 import { z } from "zod";
 import { ID } from "node-appwrite";
 import { getBucketId, getStorage } from "@/lib/appwrite";
-import {
-  ATTACHMENT_KINDS,
-  ATTACHMENT_STAGES,
-  PHOTO_TYPES,
-  validateAttachmentFile,
-} from "@/lib/attachments";
+import { ATTACHMENT_KINDS, PHOTO_TYPES, validateAttachmentFile } from "@/lib/attachments";
 import { deleteAttachmentsFor, findOwnedLocation, isValidId } from "@/lib/services";
 import { attachmentViewFrom } from "@/lib/data";
-import { Attachment } from "@/models";
+import { Attachment, ImageType } from "@/models";
 import { authGuard, badRequest, created, notFound, ok, readJson } from "@/lib/api";
 
 export const runtime = "nodejs";
@@ -20,12 +15,12 @@ type Params = { params: Promise<{ id: string; locationId: string }> };
 const fieldsSchema = z
   .object({
     kind: z.enum(ATTACHMENT_KINDS),
-    stage: z.enum(ATTACHMENT_STAGES).optional(),
+    imageTypeId: z.string().refine(isValidId, "Invalid image type").optional(),
     photoType: z.enum(PHOTO_TYPES).optional(),
   })
-  .refine((d) => d.kind !== "image" || Boolean(d.stage), {
-    message: "stage is required for image attachments",
-    path: ["stage"],
+  .refine((d) => d.kind !== "image" || Boolean(d.imageTypeId), {
+    message: "imageTypeId is required for image attachments",
+    path: ["imageTypeId"],
   })
   .refine((d) => d.kind !== "image" || Boolean(d.photoType), {
     message: "photoType is required for image attachments",
@@ -62,13 +57,25 @@ export async function POST(req: Request, { params }: Params) {
 
   const parsed = fieldsSchema.safeParse({
     kind: formData.get("kind"),
-    stage: formData.get("stage") ?? undefined,
+    imageTypeId: formData.get("imageTypeId") ?? undefined,
     photoType: formData.get("photoType") ?? undefined,
   });
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
   const fileErr = validateAttachmentFile(parsed.data.kind, file);
   if (fileErr) return badRequest(fileErr);
+
+  // Resolved once up front: its `role` becomes the derived `stage`, and its
+  // name goes straight into the response so the UI doesn't need a refetch to
+  // show what was just picked.
+  let imageType: InstanceType<typeof ImageType> | null = null;
+  if (parsed.data.kind === "image") {
+    imageType = await ImageType.findOne({
+      _id: parsed.data.imageTypeId,
+      userId: auth.session.userId,
+    });
+    if (!imageType) return badRequest("Invalid image type");
+  }
 
   const storage = getStorage();
   const bucketId = getBucketId();
@@ -91,8 +98,13 @@ export async function POST(req: Request, { params }: Params) {
       userId: auth.session.userId,
       campaignId: found.campaign._id,
       locationId: found.location._id,
+      // Stamped at upload time, not read through the campaign later: renewing
+      // moves the campaign on to the next term, and this photo documents the
+      // one it was actually taken under.
+      term: found.campaign.term ?? 1,
       kind: parsed.data.kind,
-      stage: parsed.data.kind === "image" ? parsed.data.stage : null,
+      stage: imageType?.role ?? null,
+      imageTypeId: imageType?._id ?? null,
       photoType: parsed.data.kind === "image" ? parsed.data.photoType : null,
       fileId: uploaded.$id,
       filename: file.name,
@@ -105,7 +117,10 @@ export async function POST(req: Request, { params }: Params) {
     throw err;
   }
 
-  return created(attachmentViewFrom(saved, id, locationId));
+  const imageTypeById = imageType
+    ? new Map([[String(imageType._id), imageType.name]])
+    : undefined;
+  return created(attachmentViewFrom(saved, id, locationId, imageTypeById));
 }
 
 /**

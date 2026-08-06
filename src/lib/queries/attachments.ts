@@ -10,7 +10,7 @@ import {
 import { ApiError, apiError, apiJson, apiUploadJson } from "@/lib/http";
 import { type ListKeyParams, queryKeys } from "@/lib/query-keys";
 import { listQuery } from "@/lib/queries/entities";
-import type { AttachmentKind, AttachmentStage, PhotoType } from "@/lib/attachments";
+import type { AttachmentKind, PhotoType } from "@/lib/attachments";
 import type {
   AttachmentView,
   CampaignImagesRowView,
@@ -35,7 +35,7 @@ export type UploadBatch = {
   campaignId: string;
   locationId: string;
   kind: AttachmentKind;
-  stage?: AttachmentStage;
+  imageTypeId?: string;
   photoType?: PhotoType;
   files: File[];
   /** Called after each file so the caller can drive its own progress UI. */
@@ -77,7 +77,7 @@ export function useUploadAttachments() {
           const fd = new FormData();
           fd.append("file", file);
           fd.append("kind", batch.kind);
-          if (batch.stage) fd.append("stage", batch.stage);
+          if (batch.imageTypeId) fd.append("imageTypeId", batch.imageTypeId);
           if (batch.photoType) fd.append("photoType", batch.photoType);
 
           uploaded.push(
@@ -123,12 +123,12 @@ export function useUploadAttachments() {
   });
 }
 
-/** Reclassify an already-uploaded image's stage and/or photo type. */
+/** Reclassify an already-uploaded image's type and/or photo type. */
 export type UpdateAttachmentInput = {
   campaignId: string;
   locationId: string;
   attachmentId: string;
-  stage?: AttachmentStage;
+  imageTypeId?: string;
   photoType?: PhotoType;
 };
 
@@ -140,12 +140,12 @@ export function useUpdateAttachment() {
       campaignId,
       locationId,
       attachmentId,
-      stage,
+      imageTypeId,
       photoType,
     }: UpdateAttachmentInput) =>
       apiJson<AttachmentView>(
         `/api/campaigns/${campaignId}/locations/${locationId}/attachments/${attachmentId}`,
-        { method: "PATCH", body: JSON.stringify({ stage, photoType }) },
+        { method: "PATCH", body: JSON.stringify({ imageTypeId, photoType }) },
       ),
 
     onSuccess: (updated, { campaignId, locationId }) => {

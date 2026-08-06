@@ -1,12 +1,32 @@
 import { z } from "zod";
 import { NextRequest } from "next/server";
 import { CAMPAIGN_SORT_KEYS, getCampaign, getCampaignsPage } from "@/lib/data";
-import { createCampaignForUser, validateRefsOwned } from "@/lib/services";
+import { createCampaignForUser, validateRefs } from "@/lib/services";
 import { CAMPAIGN_STATUS_FILTERS } from "@/lib/view-types";
-import { authGuard, badRequest, created, ok, parseListParams, readJson } from "@/lib/api";
+import {
+  authGuard,
+  badRequest,
+  created,
+  ok,
+  parseListParams,
+  readJson,
+  readScope,
+} from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * The form always sends every key, using an empty string for "not set" — which
+ * `z.coerce` would happily turn into the epoch or 0. Drop those first.
+ */
+const emptyToUndefined = (v: unknown) => (v === "" || v == null ? undefined : v);
+
+/** An optional site dimension: blank stays blank, never 0. */
+const optionalNumber = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().nonnegative().optional(),
+);
 
 /** One placement. The date rule applies per location, not campaign-wide. */
 export const locationSchema = z
@@ -14,15 +34,18 @@ export const locationSchema = z
     id: z.string().min(1).optional(),
     city: z.string().min(1),
     location: z.string().min(1),
-    type: z.string().min(1),
+    medium: z.string().min(1),
     vendorId: z.string().min(1),
+    // Illumination and dimensions — optional, and absent from every campaign
+    // created before the sheet grew these columns.
+    type: z.string().optional(),
+    width: optionalNumber,
+    height: optionalNumber,
+    sqft: optionalNumber,
     startDate: z.coerce.date(),
     // Optional — the client always sends the key, an empty string meaning
     // "not set" rather than an invalid date.
-    midDate: z.preprocess(
-      (v) => (v === "" || v == null ? undefined : v),
-      z.coerce.date().optional(),
-    ),
+    midDate: z.preprocess(emptyToUndefined, z.coerce.date().optional()),
     endDate: z.coerce.date(),
     status: z.enum(["LIVE", "ENDED", "PENDING_CREATIVE"]).optional(),
   })
@@ -38,6 +61,7 @@ export const locationSchema = z
 const createSchema = z.object({
   clientId: z.string().min(1),
   salesId: z.string().min(1),
+  category: z.string().optional(),
   locations: z.array(locationSchema).min(1, "Add at least one location"),
 });
 
@@ -63,7 +87,7 @@ export async function GET(req: NextRequest) {
   });
 
   return ok(
-    await getCampaignsPage(auth.session.userId, {
+    await getCampaignsPage(readScope(auth.session), {
       ...params,
       status: statusSchema.parse(sp.get("status") ?? undefined),
     }),
@@ -79,7 +103,7 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body.data);
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
-  const refErr = await validateRefsOwned(auth.session.userId, {
+  const refErr = await validateRefs({
     salesId: parsed.data.salesId,
     clientId: parsed.data.clientId,
     vendorIds: parsed.data.locations.map((l) => l.vendorId),

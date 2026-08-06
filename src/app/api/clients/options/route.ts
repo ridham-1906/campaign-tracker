@@ -14,5 +14,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
-  return ok(await getClientList(auth.session.userId));
+  // Shared directory — the same list for every signed-in user.
+  return ok(await getClientList());
 }

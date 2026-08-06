@@ -45,8 +45,8 @@ export const DOCUMENT_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
 ] as const;
 
-export const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB
-export const MAX_DOCUMENT_BYTES = 30 * 1024 * 1024; // 30MB
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20MB
+export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024; // 50MB
 
 export const IMAGE_ACCEPT = IMAGE_MIME_TYPES.join(",");
 export const DOCUMENT_ACCEPT = DOCUMENT_MIME_TYPES.join(",");
@@ -77,28 +77,34 @@ export function matchesStageFilter(
   return filter === "all" || attachment.stage === filter;
 }
 
-/** How attachments are bucketed for browsing: the three photo stages, plus decks. */
-export type AttachmentType = AttachmentStage | "document";
+/** How attachments are bucketed for browsing: the three canonical stages, an
+ * "Other" catch-all for images tagged with a custom (non-canonical) image
+ * type — or no type at all — and decks. */
+export type AttachmentType = AttachmentStage | "other" | "document";
 
 export const ATTACHMENT_TYPES: readonly AttachmentType[] = [
   ...ATTACHMENT_STAGES,
+  "other",
   "document",
 ];
 
 export const TYPE_LABELS: Record<AttachmentType, string> = {
   ...STAGE_LABELS,
+  other: "Other",
   document: "Creative deck",
 };
 
 /** Per-type file tallies; a missing key means zero. */
 export type AttachmentTypeCounts = Partial<Record<AttachmentType, number>>;
 
-/** Documents and stage-less images both read as a creative deck. */
+/** A custom-typed or untagged image reads as "Other" — never lumped in with
+ * actual creative-deck documents, which is a different `kind` entirely. */
 export function attachmentTypeOf(a: {
   kind: AttachmentKind;
   stage: AttachmentStage | null;
 }): AttachmentType {
-  return a.kind === "image" && a.stage ? a.stage : "document";
+  if (a.kind !== "image") return "document";
+  return a.stage ?? "other";
 }
 
 export function countByType(

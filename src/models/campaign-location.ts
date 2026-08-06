@@ -4,8 +4,22 @@ import { Schema, Types, InferSchemaType } from "mongoose";
 export const campaignLocationSchema = new Schema({
   city: { type: String, required: true },
   location: { type: String, required: true },
-  type: { type: String, required: true },
+  // The media format — Billboard, Gantry, LED, BQS… Named `medium` to match the
+  // source sheet's MEDIUM column; it was called `type` until that sheet started
+  // using TYPE for illumination instead (see `type` below).
+  medium: { type: String, required: true },
   vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true },
+
+  // ---- Site dimensions, straight off the sheet's W / H / SQFT / TYPE block ----
+  // All optional: every document written before these columns existed has none,
+  // and plenty of rows in the sheet still leave them blank.
+  /** Illumination — "Lit" / "Nonlit". */
+  type: { type: String, default: "" },
+  width: { type: Number, default: null },
+  height: { type: Number, default: null },
+  // Normally width × height (the sheet computes it that way), but stored rather
+  // than derived so an odd-shaped site can carry its real area.
+  sqft: { type: Number, default: null },
 
   startDate: { type: Date, required: true },
   // Optional — not every location has a mid-campaign checkpoint, and existing

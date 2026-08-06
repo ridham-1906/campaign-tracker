@@ -8,6 +8,11 @@ export type SessionPayload = {
   userId: string;
   name: string;
   email: string;
+  /** Whether this account is listed in ADMIN_EMAILS — grants cross-user
+   * read visibility on the Campaigns/Images pages. Computed once at login,
+   * not re-derived per request, so changing ADMIN_EMAILS takes effect on the
+   * next login rather than the next request. */
+  isAdmin: boolean;
 };
 
 function getSecret() {
@@ -33,6 +38,7 @@ export async function verifySessionToken(
       userId: payload.userId as string,
       name: payload.name as string,
       email: payload.email as string,
+      isAdmin: payload.isAdmin === true,
     };
   } catch {
     return null;

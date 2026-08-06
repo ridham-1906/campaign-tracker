@@ -5,7 +5,7 @@ export default async function ImagesPage() {
   // Attachment groups are fetched client-side through /api/images, which
   // aggregates them in the database rather than flattening every campaign in
   // the browser; the page only gates access.
-  await requireSession();
+  const session = await requireSession();
 
-  return <ImagesManager />;
+  return <ImagesManager isAdmin={session.isAdmin} />;
 }

@@ -24,6 +24,7 @@ const updateSchema = z
 
 type Params = { params: Promise<{ id: string }> };
 
+/** Shared directory — no owner scoping. See api/clients/[id] for the rationale. */
 export async function GET(_req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
@@ -31,7 +32,7 @@ export async function GET(_req: Request, { params }: Params) {
   if (!isValidId(id)) return notFound("Sales person not found");
 
   await connectDB();
-  const doc = await Sales.findOne({ _id: id, userId: auth.session.userId }).lean();
+  const doc = await Sales.findById(id).lean();
   if (!doc) return notFound("Sales person not found");
   return ok(serializeSales(doc));
 }
@@ -48,11 +49,9 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
   await connectDB();
-  const doc = await Sales.findOneAndUpdate(
-    { _id: id, userId: auth.session.userId },
-    parsed.data,
-    { new: true },
-  ).lean();
+  const doc = await Sales.findByIdAndUpdate(id, parsed.data, {
+    new: true,
+  }).lean();
   if (!doc) return notFound("Sales person not found");
   return ok(serializeSales(doc));
 }
@@ -63,16 +62,13 @@ export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
   if (!isValidId(id)) return notFound("Sales person not found");
 
-  const inUse = await countCampaignsUsing(auth.session.userId, "salesId", id);
+  const inUse = await countCampaignsUsing("salesId", id);
   if (inUse > 0) {
     return conflict(`In use by ${inUse} campaign(s); reassign or delete them first`);
   }
 
   await connectDB();
-  const doc = await Sales.findOneAndDelete({
-    _id: id,
-    userId: auth.session.userId,
-  });
+  const doc = await Sales.findByIdAndDelete(id);
   if (!doc) return notFound("Sales person not found");
   return ok({ ok: true, id });
 }

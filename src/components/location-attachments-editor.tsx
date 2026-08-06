@@ -2,29 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  FileSpreadsheetIcon,
-  ImagePlusIcon,
-  UploadCloudIcon,
-  XIcon,
-} from "lucide-react";
+import { ImagePlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUploadAttachments } from "@/lib/queries/attachments";
+import { useImageTypeOptions } from "@/lib/queries/image-types";
 import {
-  ATTACHMENT_STAGES,
-  DOCUMENT_ACCEPT,
   IMAGE_ACCEPT,
-  MAX_DOCUMENT_BYTES,
   MAX_IMAGE_BYTES,
   PHOTO_TYPES,
   PHOTO_TYPE_LABELS,
-  STAGE_LABELS,
   formatAttachmentSize,
   validateAttachmentFile,
-  type AttachmentKind,
   type AttachmentStage,
   type PhotoType,
 } from "@/lib/attachments";
+import { ImageTypePicker } from "@/components/image-type-picker";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,19 +31,6 @@ import type { AttachmentView } from "@/lib/view-types";
 /** The wire shape, shared with the server via lib/view-types.ts. */
 export type AttachmentRow = AttachmentView;
 
-/** The three photo stages plus the document bucket, flattened into one list so
- * picking a target is a single choice instead of "kind, then stage". */
-type UploadType = AttachmentStage | "document";
-
-const TYPE_OPTIONS: { value: UploadType; label: string }[] = [
-  ...ATTACHMENT_STAGES.map((s) => ({ value: s as UploadType, label: STAGE_LABELS[s] })),
-  { value: "document", label: "Creative deck" },
-];
-
-const TYPE_LABELS = Object.fromEntries(
-  TYPE_OPTIONS.map((o) => [o.value, o.label]),
-) as Record<UploadType, string>;
-
 const PHOTO_TYPE_OPTIONS: { value: PhotoType; label: string }[] = PHOTO_TYPES.map(
   (p) => ({ value: p, label: PHOTO_TYPE_LABELS[p] }),
 );
@@ -59,12 +38,11 @@ const PHOTO_TYPE_OPTIONS: { value: PhotoType; label: string }[] = PHOTO_TYPES.ma
 /** Thumbnails shown before the rest collapse into a "+N" tile. */
 const PREVIEW_LIMIT = 6;
 
-function countLabel(n: number, kind: AttachmentKind) {
-  const noun = kind === "image" ? "image" : "file";
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+function countLabel(n: number) {
+  return `${n} image${n === 1 ? "" : "s"}`;
 }
 
-/** A queued file plus its preview URL (empty for documents, which have none). */
+/** A queued file plus its preview URL. */
 type Picked = { file: File; url: string };
 
 export type LocationUpload = ReturnType<typeof useLocationUpload>;
@@ -73,6 +51,10 @@ export type LocationUpload = ReturnType<typeof useLocationUpload>;
  * Upload state for one location, as a hook so the host can put the submit
  * button wherever it likes — the wizard renders it in the dialog footer, next
  * to Back, rather than inline under the thumbnails.
+ *
+ * Photos only. Creative decks (`kind: "document"`) are no longer uploadable —
+ * the kind still exists everywhere else, so decks uploaded before this stay
+ * viewable and downloadable in the gallery; there is simply no way to add one.
  */
 export function useLocationUpload({
   campaignId,
@@ -86,17 +68,27 @@ export function useLocationUpload({
   onUploaded?: () => void;
   /** Defaults the type picker — set when the host already knows what's
    * being added (e.g. opened from a specific location's empty gallery). */
-  initialType?: UploadType;
+  initialType?: AttachmentStage;
 }) {
-  const [type, setType] = useState<UploadType>(initialType ?? "installation");
+  const { data: imageTypes = [] } = useImageTypeOptions();
+  const [imageType, setImageType] = useState("");
   const [photoType, setPhotoType] = useState<PhotoType>("newspaper");
   const [picked, setPicked] = useState<Picked[]>([]);
 
   const uploadAttachments = useUploadAttachments();
   const busy = uploadAttachments.isPending;
 
-  const isDocument = type === "document";
-  const kind: AttachmentKind = isDocument ? "document" : "image";
+  // The picker's default comes from the DB, unlike the old fixed 3-value
+  // enum, so it can't be known synchronously — resolved to the matching
+  // option's id the moment the list loads, adjusted during render (per
+  // https://react.dev/learn/you-might-not-need-an-effect) rather than an
+  // effect, so it lands in the same commit instead of a cascading re-render.
+  if (!imageType && imageTypes.length > 0) {
+    const match =
+      imageTypes.find((t) => t.role === (initialType ?? "installation")) ??
+      imageTypes[0];
+    if (match) setImageType(match.id);
+  }
 
   /**
    * Preview URLs are created when a file is picked and revoked when it leaves
@@ -129,18 +121,16 @@ export function useLocationUpload({
   /** Queue files, dropping any the server would reject rather than failing
    * the whole batch on one bad pick. */
   function addFiles(files: File[]) {
-    const ok = files.filter((f) => !validateAttachmentFile(kind, f));
+    const ok = files.filter((f) => !validateAttachmentFile("image", f));
     const rejected = files.length - ok.length;
     if (rejected > 0) {
-      toast.error(
-        `${countLabel(rejected, kind)} skipped — wrong format or too large`,
-      );
+      toast.error(`${countLabel(rejected)} skipped — wrong format or too large`);
     }
     if (ok.length === 0) return;
 
     const next = ok.map((file) => {
-      const url = kind === "image" ? URL.createObjectURL(file) : "";
-      if (url) liveUrls.current.add(url);
+      const url = URL.createObjectURL(file);
+      liveUrls.current.add(url);
       return { file, url };
     });
     setPicked((prev) => [...prev, ...next]);
@@ -159,11 +149,11 @@ export function useLocationUpload({
     setPicked([]);
   }
 
-  function changeType(next: UploadType) {
+  function changeType(next: string) {
     // Queued files belong to the type they were picked for.
     release(picked);
     setPicked([]);
-    setType(next);
+    setImageType(next);
   }
 
   function changePhotoType(next: PhotoType) {
@@ -180,9 +170,9 @@ export function useLocationUpload({
       {
         campaignId,
         locationId,
-        kind,
-        stage: isDocument ? undefined : type,
-        photoType: isDocument ? undefined : photoType,
+        kind: "image",
+        imageTypeId: imageType,
+        photoType,
         files: picked.map((p) => p.file),
       },
       {
@@ -194,7 +184,7 @@ export function useLocationUpload({
             const done = picked.slice(0, uploaded.length);
             release(done);
             setPicked((prev) => prev.slice(uploaded.length));
-            toast.success(`${countLabel(uploaded.length, kind)} uploaded`);
+            toast.success(`${countLabel(uploaded.length)} uploaded`);
           }
           if (firstError) {
             toast.error(firstError);
@@ -207,12 +197,10 @@ export function useLocationUpload({
   }
 
   return {
-    type,
+    imageType,
     changeType,
     photoType,
     changePhotoType,
-    kind,
-    isDocument,
     picked,
     addFiles,
     removeAt,
@@ -238,6 +226,8 @@ export function LocationAttachmentsEditor({
 }) {
   return (
     <div className="space-y-4">
+      {/* Photos only — the kind toggle went with creative-deck uploads, so the
+          location is the one bit of context left to show here. */}
       <div className="space-y-1.5">
         <div className="flex items-baseline justify-between gap-2">
           <Label className="text-xs">Type of image</Label>
@@ -245,57 +235,41 @@ export function LocationAttachmentsEditor({
             {locationLabel}
           </span>
         </div>
-        <div className={cn("grid gap-2", upload.isDocument ? "grid-cols-1" : "grid-cols-2")}>
-          <Select
-            value={upload.type}
+        <div className="grid grid-cols-2 items-start gap-2">
+          <ImageTypePicker
+            value={upload.imageType}
+            onChange={upload.changeType}
             disabled={upload.busy}
-            onValueChange={(v) => upload.changeType((v as UploadType) ?? "installation")}
+          />
+
+          <Select
+            value={upload.photoType}
+            disabled={upload.busy}
+            onValueChange={(v) =>
+              upload.changePhotoType((v as PhotoType) ?? "newspaper")
+            }
           >
             <SelectTrigger className="w-full">
               <SelectValue>
-                {(v: UploadType | null) => TYPE_LABELS[v ?? "installation"]}
+                {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {TYPE_OPTIONS.map((o) => (
+              {PHOTO_TYPE_OPTIONS.map((o) => (
                 <SelectItem key={o.value} value={o.value}>
                   {o.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-
-          {!upload.isDocument && (
-            <Select
-              value={upload.photoType}
-              disabled={upload.busy}
-              onValueChange={(v) =>
-                upload.changePhotoType((v as PhotoType) ?? "newspaper")
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue>
-                  {(v: PhotoType | null) => PHOTO_TYPE_LABELS[v ?? "newspaper"]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {PHOTO_TYPE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
         </div>
       </div>
 
-      <DropZone kind={upload.kind} disabled={upload.busy} onFiles={upload.addFiles} />
+      <DropZone disabled={upload.busy} onFiles={upload.addFiles} />
 
       {upload.picked.length > 0 && (
         <SelectedFiles
           picked={upload.picked}
-          kind={upload.kind}
           busy={upload.busy}
           onRemove={upload.removeAt}
           onClear={upload.clear}
@@ -308,17 +282,14 @@ export function LocationAttachmentsEditor({
 /** Click-or-drop target. The file input is a sibling, not a child — nesting it
  * makes the click `.click()` fires bubble back into this handler. */
 function DropZone({
-  kind,
   disabled,
   onFiles,
 }: {
-  kind: AttachmentKind;
   disabled: boolean;
   onFiles: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const isDocument = kind === "document";
 
   function open() {
     if (!disabled) inputRef.current?.click();
@@ -361,26 +332,20 @@ function DropZone({
         )}
       >
         <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          {isDocument ? (
-            <UploadCloudIcon className="size-5" />
-          ) : (
-            <ImagePlusIcon className="size-5" />
-          )}
+          <ImagePlusIcon className="size-5" />
         </span>
         <p className="text-sm font-medium">
-          Drop {isDocument ? "files" : "images"} here, or{" "}
+          Drop images here, or{" "}
           <span className="text-primary underline underline-offset-2">browse</span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {isDocument
-            ? `PPT, PPTX · up to ${formatAttachmentSize(MAX_DOCUMENT_BYTES)} each`
-            : `JPG, PNG, WEBP · up to ${formatAttachmentSize(MAX_IMAGE_BYTES)} each`}
+          {`JPG, PNG, WEBP · up to ${formatAttachmentSize(MAX_IMAGE_BYTES)} each`}
         </p>
       </div>
       <input
         ref={inputRef}
         type="file"
-        accept={isDocument ? DOCUMENT_ACCEPT : IMAGE_ACCEPT}
+        accept={IMAGE_ACCEPT}
         multiple
         hidden
         onChange={(e) => {
@@ -396,13 +361,11 @@ function DropZone({
  * in the host's footer. */
 function SelectedFiles({
   picked,
-  kind,
   busy,
   onRemove,
   onClear,
 }: {
   picked: Picked[];
-  kind: AttachmentKind;
   busy: boolean;
   onRemove: (index: number) => void;
   onClear: () => void;
@@ -413,7 +376,7 @@ function SelectedFiles({
     <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-medium">
-          {countLabel(picked.length, kind)} ready to upload
+          {countLabel(picked.length)} ready to upload
         </p>
         <Button
           type="button"
@@ -426,58 +389,31 @@ function SelectedFiles({
         </Button>
       </div>
 
-      {kind === "document" ? (
-        <div className="space-y-1.5">
-          {picked.map(({ file }, i) => (
-            <div
-              key={`${file.name}-${i}`}
-              className="flex items-center gap-2 rounded-md border bg-background px-2.5 py-1.5 text-sm"
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        {shown.map(({ file, url }, i) => (
+          <div
+            key={`${file.name}-${i}`}
+            className="group relative aspect-square overflow-hidden rounded-md border bg-background"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt={file.name} className="size-full object-cover" />
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Remove ${file.name}`}
+              onClick={() => onRemove(i)}
+              className="absolute top-1 right-1 rounded-md bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
             >
-              <FileSpreadsheetIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">{file.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {formatAttachmentSize(file.size)}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                disabled={busy}
-                aria-label={`Remove ${file.name}`}
-                onClick={() => onRemove(i)}
-              >
-                <XIcon />
-              </Button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-          {shown.map(({ file, url }, i) => (
-            <div
-              key={`${file.name}-${i}`}
-              className="group relative aspect-square overflow-hidden rounded-md border bg-background"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={file.name} className="size-full object-cover" />
-              <button
-                type="button"
-                disabled={busy}
-                aria-label={`Remove ${file.name}`}
-                onClick={() => onRemove(i)}
-                className="absolute top-1 right-1 rounded-md bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            </div>
-          ))}
-          {picked.length > PREVIEW_LIMIT && (
-            <div className="flex aspect-square items-center justify-center rounded-md border border-dashed text-sm font-medium text-muted-foreground">
-              +{picked.length - PREVIEW_LIMIT}
-            </div>
-          )}
-        </div>
-      )}
+              <XIcon className="size-3.5" />
+            </button>
+          </div>
+        ))}
+        {picked.length > PREVIEW_LIMIT && (
+          <div className="flex aspect-square items-center justify-center rounded-md border border-dashed text-sm font-medium text-muted-foreground">
+            +{picked.length - PREVIEW_LIMIT}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -10,7 +10,7 @@ export default async function ClientsPage() {
     <NamedResourceManager
       resource="clients"
       singular="Client"
-      description="Advertisers / brands the campaigns run for."
+      description="Advertisers / brands the campaigns run for. Shared across the whole team."
     />
   );
 }

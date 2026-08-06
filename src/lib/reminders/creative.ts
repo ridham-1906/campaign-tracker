@@ -40,7 +40,7 @@ export const creativeReminders: ReminderKind = {
       locations: locations.map((l) => ({
         location: l.location,
         city: l.city,
-        type: l.type,
+        medium: l.medium,
         startDate: new Date(l.startDate),
         endDate: new Date(l.endDate),
       })),

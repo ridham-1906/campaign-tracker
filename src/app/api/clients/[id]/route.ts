@@ -19,6 +19,13 @@ const updateSchema = z.object({ name: z.string().min(1) });
 
 type Params = { params: Promise<{ id: string }> };
 
+/**
+ * Clients are a shared directory (see models/client.ts), so none of these
+ * handlers scope by owner — any signed-in user may read, rename or remove any
+ * client. The delete guard below is what protects the data: a client still
+ * referenced by *anyone's* campaign cannot be removed.
+ */
+
 export async function GET(_req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
@@ -26,7 +33,7 @@ export async function GET(_req: Request, { params }: Params) {
   if (!isValidId(id)) return notFound("Client not found");
 
   await connectDB();
-  const doc = await Client.findOne({ _id: id, userId: auth.session.userId }).lean();
+  const doc = await Client.findById(id).lean();
   if (!doc) return notFound("Client not found");
   return ok(serializeNamed(doc));
 }
@@ -43,11 +50,9 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
   await connectDB();
-  const doc = await Client.findOneAndUpdate(
-    { _id: id, userId: auth.session.userId },
-    parsed.data,
-    { new: true },
-  ).lean();
+  const doc = await Client.findByIdAndUpdate(id, parsed.data, {
+    new: true,
+  }).lean();
   if (!doc) return notFound("Client not found");
   return ok(serializeNamed(doc));
 }
@@ -58,16 +63,13 @@ export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
   if (!isValidId(id)) return notFound("Client not found");
 
-  const inUse = await countCampaignsUsing(auth.session.userId, "clientId", id);
+  const inUse = await countCampaignsUsing("clientId", id);
   if (inUse > 0) {
     return conflict(`In use by ${inUse} campaign(s); reassign or delete them first`);
   }
 
   await connectDB();
-  const doc = await Client.findOneAndDelete({
-    _id: id,
-    userId: auth.session.userId,
-  });
+  const doc = await Client.findByIdAndDelete(id);
   if (!doc) return notFound("Client not found");
   return ok({ ok: true, id });
 }

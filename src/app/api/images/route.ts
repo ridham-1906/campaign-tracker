@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { IMAGE_SORT_KEYS, getCampaignImagesPage } from "@/lib/data";
-import { authGuard, ok, parseListParams } from "@/lib/api";
+import { authGuard, ok, parseListParams, readScope } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,5 +19,5 @@ export async function GET(req: NextRequest) {
     defaultSort: "uploadedAt",
     defaultDir: "desc",
   });
-  return ok(await getCampaignImagesPage(auth.session.userId, params));
+  return ok(await getCampaignImagesPage(readScope(auth.session), params));
 }

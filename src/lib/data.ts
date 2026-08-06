@@ -1,12 +1,13 @@
 import "server-only";
 import { Types, type PipelineStage } from "mongoose";
 import { connectDB } from "@/lib/db";
-import { Attachment, Campaign, Client, Sales, Vendor } from "@/models";
+import { Attachment, Campaign, Client, ImageType, Sales, User, Vendor } from "@/models";
 import {
   DEFAULT_REMINDER_LEAD_DAYS,
   addDays,
   businessToday,
 } from "@/lib/campaign";
+import { ATTACHMENT_STAGES, type AttachmentStage } from "@/lib/attachments";
 import { type ListParams, searchRegex } from "@/lib/api";
 import type {
   AttachmentView,
@@ -16,6 +17,7 @@ import type {
   CampaignStats,
   CampaignStatusFilter,
   CampaignView,
+  ImageTypeOption,
   LocationView,
   NamedCountView,
   Page,
@@ -111,8 +113,11 @@ function personFrom(ref: LeanRef): PersonView {
 
 type LeanAttachment = {
   _id: unknown;
+  /** Absent on anything uploaded before renewals were tracked — reads as 1. */
+  term?: number | null;
   kind: string;
   stage?: string | null;
+  imageTypeId?: unknown;
   photoType?: string | null;
   filename: string;
   mimeType: string;
@@ -120,15 +125,26 @@ type LeanAttachment = {
   uploadedAt?: Date | null;
 };
 
+/**
+ * `imageTypeById` resolves the id to a display name — pass a pre-built map for
+ * a bulk read (see getCampaign), or omit it for a single doc that already has
+ * the ImageType at hand (the upload/reclassify routes construct one inline).
+ */
 export function attachmentViewFrom(
   a: LeanAttachment,
   campaignId: string,
   locationId: string,
+  imageTypeById?: Map<string, string>,
 ): AttachmentView {
+  const imageTypeId = a.imageTypeId ? String(a.imageTypeId) : null;
+  const imageTypeName = imageTypeId ? imageTypeById?.get(imageTypeId) : undefined;
   return {
     id: String(a._id),
+    term: a.term ?? 1,
     kind: a.kind as AttachmentView["kind"],
     stage: (a.stage ?? null) as AttachmentView["stage"],
+    imageType:
+      imageTypeId && imageTypeName ? { id: imageTypeId, name: imageTypeName } : null,
     photoType: (a.photoType ?? null) as AttachmentView["photoType"],
     filename: a.filename,
     mimeType: a.mimeType,
@@ -138,11 +154,56 @@ export function attachmentViewFrom(
   };
 }
 
+// ---------------------------------------------------------------- image types
+
+/** Every user starts with these three canonical stages already in place, so
+ * the "type of image" picker never opens empty. `role` ties a seeded type
+ * back to the fixed stage it represents (see models/image-type.ts) — a
+ * custom type a user adds inline has none. */
+const DEFAULT_IMAGE_TYPES: { name: string; role: AttachmentStage }[] = [
+  { name: "Installation", role: "installation" },
+  { name: "Mid date", role: "mid_date" },
+  { name: "End date", role: "end_date" },
+];
+
+const STAGE_ORDER = new Map(ATTACHMENT_STAGES.map((s, i) => [s, i]));
+
+/** Canonical stages first, in their fixed order, then custom types
+ * alphabetically — matches how the picker has always looked. */
+function sortImageTypes<T extends { name: string; role: AttachmentStage | null }>(
+  list: T[],
+): T[] {
+  return [...list].sort((a, b) => {
+    const ra = a.role ? (STAGE_ORDER.get(a.role) ?? ATTACHMENT_STAGES.length) : ATTACHMENT_STAGES.length;
+    const rb = b.role ? (STAGE_ORDER.get(b.role) ?? ATTACHMENT_STAGES.length) : ATTACHMENT_STAGES.length;
+    return ra !== rb ? ra - rb : a.name.localeCompare(b.name);
+  });
+}
+
+/** The full list for a user's "type of image" picker, seeding the three
+ * canonical stages the first time this user touches it. */
+export async function getImageTypeOptions(userId: string): Promise<ImageTypeOption[]> {
+  await connectDB();
+  const existing = await ImageType.find({ userId }).lean();
+  const rows =
+    existing.length > 0
+      ? existing
+      : await ImageType.insertMany(DEFAULT_IMAGE_TYPES.map((t) => ({ ...t, userId })));
+  return sortImageTypes(
+    rows.map((t) => ({ id: String(t._id), name: t.name, role: t.role ?? null })),
+  );
+}
+
 type LeanLocation = {
   _id: unknown;
   city: string;
   location: string;
-  type: string;
+  medium?: string;
+  /** Pre-rename documents still carry the media format here — see mediumOf. */
+  type?: string;
+  width?: number | null;
+  height?: number | null;
+  sqft?: number | null;
   days: number;
   status: string;
   vendorId: unknown;
@@ -154,6 +215,19 @@ type LeanLocation = {
   reminderSentAt?: Date | null;
 };
 
+/**
+ * Split the two meanings `type` has had. Documents written before the rename
+ * keep the media format in `type` and have no `medium` at all; for those the
+ * illumination is simply unknown, and reading `type` straight through would
+ * label a Billboard as its lighting. The migration clears this up permanently —
+ * this only keeps un-migrated data readable in the meantime.
+ */
+function mediumOf(l: LeanLocation) {
+  return l.medium
+    ? { medium: l.medium, type: l.type ?? "" }
+    : { medium: l.type ?? "", type: "" };
+}
+
 /** Vendors are resolved from a Map rather than a populate/$lookup — see getCampaignsPage. */
 function locationFrom(
   l: LeanLocation,
@@ -163,7 +237,10 @@ function locationFrom(
     id: String(l._id),
     city: l.city,
     location: l.location,
-    type: l.type,
+    ...mediumOf(l),
+    width: l.width ?? null,
+    height: l.height ?? null,
+    sqft: l.sqft ?? null,
     days: l.days,
     status: l.status,
     vendor: vendorById.get(String(l.vendorId)) ?? { id: "", name: "—" },
@@ -178,9 +255,13 @@ function locationFrom(
   };
 }
 
-/** Resolve every vendor referenced by a page of campaigns, in one query. */
+/**
+ * Resolve every vendor referenced by a page of campaigns, in one query.
+ *
+ * Vendors are a shared directory, so there is nothing to scope by — a vendorId
+ * identifies exactly one vendor for every user.
+ */
 async function vendorMapFor(
-  userId: string,
   rows: { locations: LeanLocation[] }[],
 ): Promise<Map<string, PersonView>> {
   const ids = [
@@ -190,8 +271,7 @@ async function vendorMapFor(
   ];
   if (ids.length === 0) return new Map();
 
-  // Scoped by userId, which re-applies the ownership check .populate() never did.
-  const vendors = await Vendor.find({ _id: { $in: ids }, userId })
+  const vendors = await Vendor.find({ _id: { $in: ids } })
     .select("name")
     .lean();
   return new Map(
@@ -201,21 +281,25 @@ async function vendorMapFor(
 
 // ---------------------------------------------------------------- options
 
-export async function getSalesList(userId: string): Promise<PersonView[]> {
+/**
+ * Clients, vendors and sales people are a shared directory — every user picks
+ * from the same list, so none of these take a userId. See models/client.ts.
+ */
+export async function getSalesList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Sales.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Sales.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name, email: r.email }));
 }
 
-export async function getVendorList(userId: string): Promise<PersonView[]> {
+export async function getVendorList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Vendor.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Vendor.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
 }
 
-export async function getClientList(userId: string): Promise<PersonView[]> {
+export async function getClientList(): Promise<PersonView[]> {
   await connectDB();
-  const rows = await Client.find({ userId }).sort({ name: 1 }).lean();
+  const rows = await Client.find().sort({ name: 1 }).lean();
   return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
 }
 
@@ -266,19 +350,21 @@ const CAMPAIGN_SORT_FIELDS: Record<CampaignSortKey, string> = {
  * Resolve the reference ids matching a search term, so the campaign pipeline
  * never has to join before paginating.
  *
- * Clients/Sales/Vendors are per-user reference tables of tens to low hundreds
- * of rows, so three indexed {userId, name} lookups are effectively free — and
- * they let the main $match stay a plain indexable query. The alternative
- * ($lookup before $match) would join every campaign of the user before
- * filtering, and vendor names would need the locations array unwound and
- * reassembled.
+ * Clients/Sales/Vendors are shared reference tables of tens to low hundreds of
+ * rows, so three indexed name lookups are effectively free — and they let the
+ * main $match stay a plain indexable query. The alternative ($lookup before
+ * $match) would join every campaign of the user before filtering, and vendor
+ * names would need the locations array unwound and reassembled.
+ *
+ * Resolving names globally doesn't widen the result: the ids only feed an $or
+ * that still sits inside the caller's userId-scoped campaign filter.
  */
-async function buildSearch(userId: string, q: string) {
+async function buildSearch(q: string) {
   const rx = searchRegex(q);
   const [clientIds, salesIds, vendorIds] = await Promise.all([
-    Client.find({ userId, name: rx }).limit(500).distinct("_id"),
-    Sales.find({ userId, name: rx }).limit(500).distinct("_id"),
-    Vendor.find({ userId, name: rx }).limit(500).distinct("_id"),
+    Client.find({ name: rx }).limit(500).distinct("_id"),
+    Sales.find({ name: rx }).limit(500).distinct("_id"),
+    Vendor.find({ name: rx }).limit(500).distinct("_id"),
   ]);
 
   return {
@@ -289,29 +375,38 @@ async function buildSearch(userId: string, q: string) {
       // did — it joined every location into one searchable string.
       { "locations.location": rx },
       { "locations.city": rx },
+      { "locations.medium": rx },
       { "locations.type": rx },
+      { category: rx },
       { "locations.vendorId": { $in: vendorIds } },
     ],
   };
 }
 
+/** `userId: null` means "every user" — the admin all-users view. */
 async function campaignFilter(
-  userId: string,
+  userId: string | null,
   opts: { q?: string; status?: CampaignStatusFilter },
   now?: Date,
 ) {
   return {
-    userId: oid(userId),
+    ...(userId ? { userId: oid(userId) } : {}),
     ...statusFilters(now)[opts.status ?? "all"],
-    ...(opts.q ? await buildSearch(userId, opts.q) : {}),
+    ...(opts.q ? await buildSearch(opts.q) : {}),
   };
 }
 
 /** Sinks malformed (location-less) campaigns instead of floating them to the top. */
 const FAR_FUTURE = new Date(8.64e15);
 
+/**
+ * `userId: null` is the admin all-users view: every campaign regardless of
+ * owner, with an extra `owner` lookup so the caller can tell whose is whose.
+ * Writes never go through this path — create/edit/delete stay scoped to the
+ * caller's own userId everywhere else, so this is read-only in effect.
+ */
 export async function getCampaignsPage(
-  userId: string,
+  userId: string | null,
   params: ListParams<CampaignSortKey> & { status?: CampaignStatusFilter },
   now?: Date,
 ): Promise<Page<CampaignListView>> {
@@ -346,6 +441,20 @@ export async function getCampaignsPage(
     // A deleted client/sales must not drop the campaign — personFrom renders "—".
     { $unwind: { path: "$client", preserveNullAndEmptyArrays: true } },
     { $unwind: { path: "$sales", preserveNullAndEmptyArrays: true } },
+    ...(userId === null
+      ? ([
+          {
+            $lookup: {
+              from: User.collection.name,
+              localField: "userId",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [{ $project: { name: 1, email: 1 } }],
+            },
+          },
+          { $unwind: { path: "$owner", preserveNullAndEmptyArrays: true } },
+        ] as PipelineStage[])
+      : []),
   ];
 
   // Sorting by client name is the one case that needs the join up front; every
@@ -373,9 +482,12 @@ export async function getCampaignsPage(
 
   type Row = {
     _id: Types.ObjectId;
+    category?: string;
+    term?: number;
     locations: LeanLocation[];
     client?: LeanRef;
     sales?: LeanRef;
+    owner?: LeanRef;
   };
 
   const [rows, total] = await Promise.all([
@@ -385,13 +497,16 @@ export async function getCampaignsPage(
     Campaign.countDocuments(filter),
   ]);
 
-  const vendorById = await vendorMapFor(userId, rows);
+  const vendorById = await vendorMapFor(rows);
 
   return {
     rows: rows.map((r) => ({
       id: String(r._id),
       client: personFrom(r.client),
       sales: personFrom(r.sales),
+      category: r.category ?? "",
+      term: r.term ?? 1,
+      ...(userId === null ? { owner: personFrom(r.owner) } : {}),
       locations: (r.locations ?? []).map((l) => locationFrom(l, vendorById)),
     })),
     total,
@@ -406,7 +521,7 @@ export async function getCampaignsPage(
  * filter — the tiles *are* the status filter.
  */
 export async function getCampaignStats(
-  userId: string,
+  userId: string | null,
   opts: { q?: string } = {},
   now?: Date,
 ): Promise<CampaignStats> {
@@ -467,13 +582,20 @@ export async function getCampaignStats(
   );
 }
 
-/** The full campaign, attachments included — the detail/edit view. */
+/**
+ * The full campaign, attachments included — the detail/edit view.
+ *
+ * `userId: null` is the admin all-users view — any campaign, regardless of
+ * owner. The ImageType lookup always uses the campaign's own `r.userId`
+ * (the type picker is per-owner), never the `userId` param, since the two
+ * differ exactly in this admin case.
+ */
 export async function getCampaign(
-  userId: string,
+  userId: string | null,
   id: string,
 ): Promise<CampaignView | null> {
   await connectDB();
-  const r = await Campaign.findOne({ _id: id, userId })
+  const r = await Campaign.findOne({ _id: id, ...(userId ? { userId } : {}) })
     .populate("salesId", "name email")
     .populate("clientId", "name")
     .populate("locations.vendorId", "name")
@@ -483,15 +605,19 @@ export async function getCampaign(
   const campaignId = r._id.toString();
 
   // Attachments are their own collection now, so they come back in one extra
-  // query and get grouped onto their locations here.
-  const attachments = await Attachment.find({ campaignId: r._id })
-    .sort({ uploadedAt: 1 })
-    .lean();
+  // query and get grouped onto their locations here. Image types are fetched
+  // once (not per attachment) and resolved through a map, same shape as the
+  // vendor lookup below.
+  const [attachments, imageTypes] = await Promise.all([
+    Attachment.find({ campaignId: r._id }).sort({ uploadedAt: 1 }).lean(),
+    ImageType.find({ userId: r.userId }).lean(),
+  ]);
+  const imageTypeById = new Map(imageTypes.map((t) => [String(t._id), t.name]));
   const byLocation = new Map<string, AttachmentView[]>();
   for (const a of attachments) {
     const locationId = String(a.locationId);
     const list = byLocation.get(locationId) ?? [];
-    list.push(attachmentViewFrom(a, campaignId, locationId));
+    list.push(attachmentViewFrom(a, campaignId, locationId, imageTypeById));
     byLocation.set(locationId, list);
   }
 
@@ -502,7 +628,10 @@ export async function getCampaign(
         id: locationId,
         city: l.city,
         location: l.location,
-        type: l.type,
+        ...mediumOf(l),
+        width: l.width ?? null,
+        height: l.height ?? null,
+        sqft: l.sqft ?? null,
         days: l.days,
         status: l.status,
         vendor: personFrom(l.vendorId as LeanRef),
@@ -525,6 +654,19 @@ export async function getCampaign(
     id: campaignId,
     client: personFrom(r.clientId as LeanRef),
     sales: personFrom(r.salesId as LeanRef),
+    category: r.category ?? "",
+    term: r.term ?? 1,
+    termHistory: (r.termHistory ?? []).map((t) => ({
+      term: t.term,
+      renewedAt: new Date(t.renewedAt ?? Date.now()).toISOString(),
+      locations: (t.locations ?? []).map((l) => ({
+        locationId: String(l.locationId),
+        startDate: new Date(l.startDate).toISOString(),
+        midDate: l.midDate ? new Date(l.midDate).toISOString() : null,
+        endDate: new Date(l.endDate).toISOString(),
+        days: l.days,
+      })),
+    })),
     locations,
   };
 }
@@ -535,41 +677,49 @@ export const ENTITY_SORT_KEYS = ["name"] as const;
 export type EntitySortKey = (typeof ENTITY_SORT_KEYS)[number];
 
 /**
+ * These three are a shared directory — the list is the same for every user, so
+ * there is no owner filter here (see models/client.ts).
+ *
  * `count` is deliberately absent from the sort keys. It's computed *after* the
  * page is chosen, so sorting by it would silently order by nothing — it needs
  * a campaign-rooted pipeline instead.
  */
-function entityFilter(userId: string, q?: string) {
-  return { userId, ...(q ? { name: searchRegex(q) } : {}) };
+function entityFilter(q?: string) {
+  return q ? { name: searchRegex(q) } : {};
 }
 
-/** Campaigns-per-entity, for just the ids on the current page. */
+/**
+ * Campaigns-per-entity, for just the ids on the current page.
+ *
+ * Counted across every user's campaigns, not just the viewer's: the number is
+ * what blocks a delete, and a client still referenced by somebody else's
+ * campaign must not look free to remove. Must agree with
+ * countCampaignsUsing() in services.ts.
+ */
 async function countsByRef(
-  userId: string,
   field: "clientId" | "salesId",
   ids: Types.ObjectId[],
 ) {
   if (ids.length === 0) return new Map<string, number>();
   const rows = await Campaign.aggregate<{ _id: Types.ObjectId; n: number }>([
-    { $match: { userId: oid(userId), [field]: { $in: ids } } },
+    { $match: { [field]: { $in: ids } } },
     { $group: { _id: `$${field}`, n: { $sum: 1 } } },
   ]).exec();
   return new Map(rows.map((r) => [String(r._id), r.n]));
 }
 
 export async function getClientsPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<NamedCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Client.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
     Client.countDocuments(filter),
   ]);
 
-  const counts = await countsByRef(userId, "clientId", rows.map((r) => r._id));
+  const counts = await countsByRef("clientId", rows.map((r) => r._id));
 
   return {
     rows: rows.map((r) => ({
@@ -584,18 +734,17 @@ export async function getClientsPage(
 }
 
 export async function getSalesPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<SalesCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Sales.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
     Sales.countDocuments(filter),
   ]);
 
-  const counts = await countsByRef(userId, "salesId", rows.map((r) => r._id));
+  const counts = await countsByRef("salesId", rows.map((r) => r._id));
 
   return {
     rows: rows.map((r) => ({
@@ -611,11 +760,10 @@ export async function getSalesPage(
 }
 
 export async function getVendorsPage(
-  userId: string,
   p: ListParams<EntitySortKey>,
 ): Promise<Page<NamedCountView>> {
   await connectDB();
-  const filter = entityFilter(userId, p.q);
+  const filter = entityFilter(p.q);
 
   const [rows, total] = await Promise.all([
     Vendor.find(filter).sort({ name: p.dir, _id: 1 }).skip(p.skip).limit(p.limit).lean(),
@@ -630,10 +778,11 @@ export async function getVendorsPage(
      * several of its locations share the vendor. $setIntersection dedupes and
      * prunes to this page's ids in one step, so unwinding it emits exactly one
      * row per (campaign, vendor) — without ever expanding the full locations
-     * array. Must agree with countCampaignsUsing() in services.ts.
+     * array. Across every user's campaigns, for the reason in countsByRef().
+     * Must agree with countCampaignsUsing() in services.ts.
      */
     const grouped = await Campaign.aggregate<{ _id: Types.ObjectId; n: number }>([
-      { $match: { userId: oid(userId), "locations.vendorId": { $in: ids } } },
+      { $match: { "locations.vendorId": { $in: ids } } },
       { $project: { v: { $setIntersection: ["$locations.vendorId", ids] } } },
       { $unwind: "$v" },
       { $group: { _id: "$v", n: { $sum: 1 } } },
@@ -681,8 +830,12 @@ const IMAGE_SORT_FIELDS: Record<ImageSortKey, string> = {
  * while being invisible in the preview dialog — `npm run check:attachments`
  * exists to keep that at zero.
  */
+/**
+ * `userId: null` is the admin all-users view: every campaign with at least
+ * one file, regardless of owner, plus an `owner` on each row.
+ */
 export async function getCampaignImagesPage(
-  userId: string,
+  userId: string | null,
   p: ListParams<ImageSortKey>,
 ): Promise<Page<CampaignImagesRowView>> {
   await connectDB();
@@ -692,7 +845,7 @@ export async function getCampaignImagesPage(
   const pipeline: PipelineStage[] = [
     // Covered by {userId, campaignId, uploadedAt}: the group never fetches a
     // document, since every field it touches is in the index.
-    { $match: { userId: oid(userId) } },
+    { $match: userId ? { userId: oid(userId) } : {} },
     {
       $group: {
         _id: "$campaignId",
@@ -714,6 +867,7 @@ export async function getCampaignImagesPage(
           {
             $project: {
               clientId: 1,
+              userId: 1,
               locationCount: { $size: "$locations" },
               cities: { $setUnion: ["$locations.city", []] },
               locationNames: { $setUnion: ["$locations.location", []] },
@@ -733,6 +887,20 @@ export async function getCampaignImagesPage(
       },
     },
     { $unwind: { path: "$client", preserveNullAndEmptyArrays: true } },
+    ...(userId === null
+      ? ([
+          {
+            $lookup: {
+              from: User.collection.name,
+              localField: "campaign.userId",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [{ $project: { name: 1, email: 1 } }],
+            },
+          },
+          { $unwind: { path: "$owner", preserveNullAndEmptyArrays: true } },
+        ] as PipelineStage[])
+      : []),
     {
       $addFields: {
         // "" rather than null: BSON sorts null before every string, which would
@@ -741,6 +909,13 @@ export async function getCampaignImagesPage(
         locationCount: { $ifNull: ["$campaign.locationCount", 0] },
         cities: { $ifNull: ["$campaign.cities", []] },
         locationNames: { $ifNull: ["$campaign.locationNames", []] },
+        ...(userId === null
+          ? {
+              ownerId: { $toString: "$owner._id" },
+              ownerName: { $ifNull: ["$owner.name", "—"] },
+              ownerEmail: "$owner.email",
+            }
+          : {}),
       },
     },
     // A regex against an array matches if any element does, so this one clause
@@ -773,6 +948,9 @@ export async function getCampaignImagesPage(
     latestUploadedAt: Date;
     clientName: string;
     locationCount: number;
+    ownerId?: string;
+    ownerName?: string;
+    ownerEmail?: string;
   };
 
   const [res] = await Attachment.aggregate<{
@@ -789,6 +967,9 @@ export async function getCampaignImagesPage(
       locationCount: g.locationCount,
       fileCount: g.fileCount,
       latestUploadedAt: new Date(g.latestUploadedAt).toISOString(),
+      ...(userId === null
+        ? { owner: { id: g.ownerId ?? "", name: g.ownerName ?? "—", email: g.ownerEmail } }
+        : {}),
     }),
   );
 

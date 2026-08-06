@@ -19,6 +19,7 @@ const updateSchema = z.object({ name: z.string().min(1) });
 
 type Params = { params: Promise<{ id: string }> };
 
+/** Shared directory — no owner scoping. See api/clients/[id] for the rationale. */
 export async function GET(_req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
@@ -26,7 +27,7 @@ export async function GET(_req: Request, { params }: Params) {
   if (!isValidId(id)) return notFound("Vendor not found");
 
   await connectDB();
-  const doc = await Vendor.findOne({ _id: id, userId: auth.session.userId }).lean();
+  const doc = await Vendor.findById(id).lean();
   if (!doc) return notFound("Vendor not found");
   return ok(serializeNamed(doc));
 }
@@ -43,11 +44,9 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
 
   await connectDB();
-  const doc = await Vendor.findOneAndUpdate(
-    { _id: id, userId: auth.session.userId },
-    parsed.data,
-    { new: true },
-  ).lean();
+  const doc = await Vendor.findByIdAndUpdate(id, parsed.data, {
+    new: true,
+  }).lean();
   if (!doc) return notFound("Vendor not found");
   return ok(serializeNamed(doc));
 }
@@ -58,16 +57,13 @@ export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
   if (!isValidId(id)) return notFound("Vendor not found");
 
-  const inUse = await countCampaignsUsing(auth.session.userId, "vendorId", id);
+  const inUse = await countCampaignsUsing("vendorId", id);
   if (inUse > 0) {
     return conflict(`In use by ${inUse} campaign(s); reassign or delete them first`);
   }
 
   await connectDB();
-  const doc = await Vendor.findOneAndDelete({
-    _id: id,
-    userId: auth.session.userId,
-  });
+  const doc = await Vendor.findByIdAndDelete(id);
   if (!doc) return notFound("Vendor not found");
   return ok({ ok: true, id });
 }

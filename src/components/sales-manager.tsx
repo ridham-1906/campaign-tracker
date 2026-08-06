@@ -134,7 +134,8 @@ export function SalesManager() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sales persons</h1>
           <p className="text-sm text-muted-foreground">
-            The people who receive campaign-expiry reminder emails.
+            The people who receive campaign-expiry reminder emails. Shared
+            across the whole team.
           </p>
         </div>
         <Button onClick={openAdd}>+ Add sales person</Button>

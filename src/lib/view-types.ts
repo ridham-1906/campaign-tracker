@@ -10,8 +10,13 @@ export type PersonView = { id: string; name: string; email?: string };
 
 export type AttachmentView = {
   id: string;
+  /** Which booking term this file documents. 1 for everything pre-renewals. */
+  term: number;
   kind: AttachmentKind;
   stage: AttachmentStage | null;
+  /** The user-managed image type this photo was tagged with — null for
+   * documents, and for images uploaded before this field existed. */
+  imageType: { id: string; name: string } | null;
   photoType: PhotoType | null;
   filename: string;
   mimeType: string;
@@ -25,7 +30,14 @@ export type LocationView = {
   id: string;
   city: string;
   location: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
+  /** Illumination — "Lit" / "Nonlit". `""` when never filled in. */
   type: string;
+  /** Site dimensions in feet; null when never filled in. */
+  width: number | null;
+  height: number | null;
+  sqft: number | null;
   days: number;
   status: string;
   vendor: PersonView;
@@ -36,23 +48,46 @@ export type LocationView = {
   attachments: AttachmentView[];
 };
 
+/** One archived booking period — see models/campaign-term.ts. */
+export type CampaignTermView = {
+  term: number;
+  renewedAt: string; // ISO
+  locations: {
+    locationId: string;
+    startDate: string; // ISO
+    midDate: string | null; // ISO
+    endDate: string; // ISO
+    days: number;
+  }[];
+};
+
 export type CampaignView = {
   id: string;
   client: PersonView;
   sales: PersonView;
+  /** Campaign-wide classification. `""` when never filled in. */
+  category: string;
+  /** Current booking period. 1 until the campaign is first renewed. */
+  term: number;
+  /** Past periods, oldest first. Empty until the first renewal. */
+  termHistory: CampaignTermView[];
   locations: LocationView[];
 };
 
 /**
  * A campaign as it appears in the paginated list. Attachments are omitted:
  * the campaigns table has no attachment column, and carrying them was roughly
- * half the payload. The detail endpoint (`GET /api/campaigns/:id`) still
- * returns the full `CampaignView`.
+ * half the payload. `termHistory` is left out for the same reason — the row
+ * shows the current `term`, not the archive. The detail endpoint
+ * (`GET /api/campaigns/:id`) still returns the full `CampaignView`.
  */
 export type CampaignListLocationView = Omit<LocationView, "attachments">;
 
-export type CampaignListView = Omit<CampaignView, "locations"> & {
+export type CampaignListView = Omit<CampaignView, "locations" | "termHistory"> & {
   locations: CampaignListLocationView[];
+  /** Only present when an admin account is viewing every user's campaigns —
+   * absent for a normal, single-user query. */
+  owner?: PersonView;
 };
 
 /** The six stat tiles above the campaigns table. */
@@ -81,6 +116,11 @@ export type CampaignStatusFilter = (typeof CAMPAIGN_STATUS_FILTERS)[number];
 /** Bare option for comboboxes. */
 export type OptionView = { id: string; name: string };
 
+/** One "type of image" option — `role` ties a seeded type back to the fixed
+ * lifecycle stage it represents (installation/mid_date/end_date); a custom
+ * type a user adds inline has none. */
+export type ImageTypeOption = { id: string; name: string; role: AttachmentStage | null };
+
 /** A reference entity plus how many campaigns use it. */
 export type NamedCountView = { id: string; name: string; count: number };
 export type SalesCountView = NamedCountView & { email: string };
@@ -98,6 +138,56 @@ export type CampaignImagesRowView = {
   locationCount: number;
   fileCount: number;
   latestUploadedAt: string; // ISO
+  /** Only present when an admin account is viewing every user's images. */
+  owner?: PersonView;
+};
+
+// ---- Shared preview link ----
+
+/**
+ * The subset of a location the gallery and the deck builder actually read.
+ * `LocationView` satisfies it, so nothing at the existing call sites changes —
+ * it exists so the public share payload can leave out the internal vendor,
+ * status and reminder bookkeeping and still feed the same components.
+ */
+export type LocationPreview = Pick<
+  LocationView,
+  | "id"
+  | "city"
+  | "location"
+  | "medium"
+  | "type"
+  | "width"
+  | "height"
+  | "sqft"
+  | "startDate"
+  | "midDate"
+  | "endDate"
+  | "attachments"
+>;
+
+/**
+ * What a never-expiring preview link resolves to. No emails, no vendors, no
+ * reminder state: whoever holds the token is outside the app, so this carries
+ * only what the preview page renders.
+ */
+export type SharePreviewView = {
+  token: string;
+  clientName: string;
+  /** The user who shared it, for the "shared by" line. */
+  sharedBy: string;
+  createdAt: string; // ISO
+  fileCount: number;
+  locations: LocationPreview[];
+};
+
+/** What POST /api/campaigns/:id/share answers with. */
+export type ShareSendResult = {
+  ok: true;
+  /** Absolute, never-expiring preview URL. */
+  url: string;
+  sentTo: string;
+  fileCount: number;
 };
 
 // ---- Pagination envelope ----

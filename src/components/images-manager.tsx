@@ -4,13 +4,20 @@ import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ImageIcon, Loader2Icon, PlusIcon, PresentationIcon } from "lucide-react";
+import {
+  ImageIcon,
+  Loader2Icon,
+  PlusIcon,
+  PresentationIcon,
+  SendIcon,
+} from "lucide-react";
 import type { PhotoFilter, StageFilter } from "@/lib/attachments";
 import { formatDate } from "@/lib/campaign";
 import { apiJson } from "@/lib/http";
 import { queryKeys } from "@/lib/query-keys";
 import { useCampaignQuery } from "@/lib/queries/campaigns";
 import { useImagesQuery } from "@/lib/queries/attachments";
+import { useSendPreviewLink } from "@/lib/queries/share";
 import { AddImagesWizard } from "@/components/add-images-wizard";
 import { useExportPpt } from "@/components/image-preview/export-ppt";
 import { ImagePreviewDialog } from "@/components/image-preview/dialog";
@@ -23,6 +30,7 @@ import {
   useTableState,
 } from "@/components/ui/data-table";
 import {
+  DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -30,7 +38,7 @@ import {
 import { RowActions } from "@/components/ui/row-actions";
 import type { CampaignImagesRowView, CampaignView } from "@/lib/view-types";
 
-export function ImagesManager() {
+export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
   const [wizardOpen, setWizardOpen] = useState(false);
   // Bumped every time the wizard opens so it remounts with fresh step/
   // selection state instead of resuming wherever it was left last time.
@@ -60,6 +68,10 @@ export function ImagesManager() {
   const queryClient = useQueryClient();
   const pptExport = useExportPpt();
   const [exportingRowId, setExportingRowId] = useState<string | null>(null);
+  const sendPreviewLink = useSendPreviewLink();
+  // Which row's link is being mailed — the mutation itself only knows that
+  // *a* send is in flight, and the spinner belongs on the row that started it.
+  const [sendingRowId, setSendingRowId] = useState<string | null>(null);
 
   function openWizard(seed?: { campaignId: string; locationId: string }) {
     setWizardKey((k) => k + 1);
@@ -111,8 +123,35 @@ export function ImagesManager() {
     [queryClient, pptExport],
   );
 
+  /**
+   * Mails the campaign's sales person a link to these photos. The link is
+   * public, unguessable and never expires — from it they can browse every
+   * location, download the files and export the deck without an account.
+   */
+  const sendPreview = useCallback(
+    (row: CampaignImagesRowView) => {
+      setSendingRowId(row.id);
+      sendPreviewLink.mutate(
+        { campaignId: row.id },
+        { onSettled: () => setSendingRowId(null) },
+      );
+    },
+    [sendPreviewLink],
+  );
+
   const columns = useMemo<ColumnDef<CampaignImagesRowView>[]>(
     () => [
+      ...(isAdmin
+        ? [
+            {
+              id: "owner",
+              header: "Owner",
+              cell: ({ row }: { row: { original: CampaignImagesRowView } }) => (
+                <span>{row.original.owner?.name ?? "—"}</span>
+              ),
+            } satisfies ColumnDef<CampaignImagesRowView>,
+          ]
+        : []),
       {
         id: "client",
         header: "Client",
@@ -146,8 +185,20 @@ export function ImagesManager() {
         meta: { className: "w-0 text-right" },
         cell: ({ row }) => {
           const busy = exportingRowId === row.original.id;
+          const sending = sendingRowId === row.original.id;
           return (
             <RowActions>
+              <DropdownMenuItem
+                disabled={sending}
+                onClick={() => sendPreview(row.original)}
+              >
+                {sending ? (
+                  <Loader2Icon className="animate-spin" />
+                ) : (
+                  <SendIcon />
+                )}
+                Send to sales
+              </DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   {busy ? (
@@ -171,7 +222,7 @@ export function ImagesManager() {
         },
       },
     ],
-    [exportingRowId, exportCampaignPpt],
+    [isAdmin, exportingRowId, exportCampaignPpt, sendingRowId, sendPreview],
   );
 
   const renderLocations = useCallback(
@@ -190,7 +241,7 @@ export function ImagesManager() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Images</h1>
           <p className="text-sm text-muted-foreground">
-            Every photo and creative deck uploaded across your campaigns.
+            Every photo uploaded across your campaigns.
           </p>
         </div>
         <Button onClick={() => openWizard()}>
@@ -293,7 +344,7 @@ function ImageLocationsPanel({
           <tr className="text-left text-xs text-muted-foreground">
             <th className="pb-2 pr-4 font-medium">Location</th>
             <th className="pb-2 pr-4 font-medium">City</th>
-            <th className="pb-2 pr-4 font-medium">Type</th>
+            <th className="pb-2 pr-4 font-medium">Medium</th>
             <th className="pb-2 pr-4 font-medium">Files</th>
             <th className="pb-2 font-medium">Last upload</th>
           </tr>
@@ -320,7 +371,7 @@ function ImageLocationsPanel({
               >
                 <td className="py-2 pr-4 font-medium">{l.location}</td>
                 <td className="py-2 pr-4">{l.city}</td>
-                <td className="py-2 pr-4">{l.type}</td>
+                <td className="py-2 pr-4">{l.medium}</td>
                 <td className="py-2 pr-4">
                   {l.attachments.length === 0 ? (
                     <span className="text-muted-foreground">0</span>

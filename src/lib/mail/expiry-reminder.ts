@@ -4,7 +4,7 @@ import { formatDay, layout, locationCard, type MailMessage } from "./shared";
 export type ExpiryLocation = {
   location: string;
   city: string;
-  type: string;
+  medium: string;
   endDate: Date;
   daysLeft: number;
 };
@@ -36,7 +36,7 @@ export function buildExpiryReminder(input: ExpiryReminderInput): MailMessage {
     .map((l) =>
       locationCard(l.location, [
         { label: "City", value: l.city },
-        { label: "Type", value: l.type },
+        { label: "Medium", value: l.medium },
         { label: "End date", value: formatDay(l.endDate) },
         {
           label: "Days left",
@@ -50,7 +50,7 @@ export function buildExpiryReminder(input: ExpiryReminderInput): MailMessage {
   const lines = locations
     .map(
       (l) =>
-        `- ${l.location} (${l.city}, ${l.type}) - ends ${formatDay(l.endDate)}, ${l.daysLeft} day${plural(l.daysLeft)} left`,
+        `- ${l.location} (${l.city}, ${l.medium}) - ends ${formatDay(l.endDate)}, ${l.daysLeft} day${plural(l.daysLeft)} left`,
     )
     .join("\n");
 

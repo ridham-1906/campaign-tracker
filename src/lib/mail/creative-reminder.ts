@@ -4,7 +4,7 @@ import { formatDay, layout, locationCard, type MailMessage } from "./shared";
 export type CreativeLocation = {
   location: string;
   city: string;
-  type: string;
+  medium: string;
   startDate: Date;
   endDate: Date;
 };
@@ -33,7 +33,7 @@ export function buildCreativeReminder(
     .map((l) =>
       locationCard(l.location, [
         { label: "City", value: l.city },
-        { label: "Type", value: l.type },
+        { label: "Medium", value: l.medium },
         { label: "Start date", value: formatDay(l.startDate) },
         { label: "End date", value: formatDay(l.endDate) },
       ]),
@@ -43,7 +43,7 @@ export function buildCreativeReminder(
   const lines = locations
     .map(
       (l) =>
-        `- ${l.location} (${l.city}, ${l.type}) - runs ${formatDay(l.startDate)} to ${formatDay(l.endDate)}`,
+        `- ${l.location} (${l.city}, ${l.medium}) - runs ${formatDay(l.startDate)} to ${formatDay(l.endDate)}`,
     )
     .join("\n");
 

@@ -32,8 +32,16 @@ export type LocationPayload = {
   id?: string;
   city: string;
   location: string;
-  type: string;
+  /** Media format — Billboard, Gantry, LED… */
+  medium: string;
   vendorId: string;
+  /** Illumination — "Lit" / "Nonlit". */
+  type: string;
+  // Dimensions go out as the form's raw input strings; the API coerces them and
+  // reads "" as "not set".
+  width: string;
+  height: string;
+  sqft: string;
   startDate: string;
   midDate: string;
   endDate: string;
@@ -43,6 +51,7 @@ export type LocationPayload = {
 export type CampaignPayload = {
   clientId: string;
   salesId: string;
+  category: string;
   locations: LocationPayload[];
 };
 
@@ -107,6 +116,35 @@ export function useSaveCampaign() {
       queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
       // Editing a campaign can drop locations, which deletes their
       // attachments — so the images list may no longer be accurate.
+      queryClient.invalidateQueries({ queryKey: queryKeys.images.all });
+    },
+  });
+}
+
+/**
+ * Renewal is an update of the existing campaign, not a second one. It gets its
+ * own hook because the endpoint differs and because it can change which photos
+ * are on screen — every gallery is now scoped to a term, and a renewal starts
+ * a new one.
+ */
+export function useRenewCampaign() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      locations,
+    }: {
+      id: string;
+      locations: LocationPayload[];
+    }) =>
+      apiJson<CampaignView>(`/api/campaigns/${id}/renew`, {
+        method: "POST",
+        body: JSON.stringify({ locations }),
+      }),
+    onSuccess: (data) => {
+      toast.success(`Renewed — now on term ${data.term}`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.images.all });
     },
   });

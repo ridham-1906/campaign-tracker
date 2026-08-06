@@ -5,15 +5,19 @@ import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import {
+  addDays,
+  businessToday,
   daysUntil,
   formatDate,
   lifecycleState,
+  startOfDay,
   toDateInputValue,
 } from "@/lib/campaign";
 import {
   useCampaignStatsQuery,
   useCampaignsQuery,
   useDeleteCampaign,
+  useRenewCampaign,
   useSaveCampaign,
   useSendReminder,
 } from "@/lib/queries/campaigns";
@@ -24,6 +28,7 @@ import {
   CampaignForm,
   emptyCampaign,
   type CampaignDraft,
+  type CampaignFormMode,
   type LocationDraft,
 } from "@/components/campaign-form";
 import { Button } from "@/components/ui/button";
@@ -77,16 +82,26 @@ function earliestStart(c: CampaignRow) {
   return Math.min(...c.locations.map((l) => new Date(l.startDate).getTime()));
 }
 
+/** Dimensions are numbers on the wire and `<Input>` strings in the draft. */
+function sizeText(v: number | null) {
+  return v == null ? "" : String(v);
+}
+
 function toDraft(c: CampaignRow): CampaignDraft {
   return {
     clientId: c.client.id,
     salesId: c.sales.id,
+    category: c.category,
     locations: c.locations.map(
       (l): LocationDraft => ({
         id: l.id,
         city: l.city,
         location: l.location,
+        medium: l.medium,
         type: l.type,
+        width: sizeText(l.width),
+        height: sizeText(l.height),
+        sqft: sizeText(l.sqft),
         vendorId: l.vendor.id,
         startDate: toDateInputValue(l.startDate),
         midDate: l.midDate ? toDateInputValue(l.midDate) : "",
@@ -97,11 +112,76 @@ function toDraft(c: CampaignRow): CampaignDraft {
   };
 }
 
-export function CampaignManager() {
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * A renewal moves the *same* campaign into its next booking term — it does not
+ * write a second one. Location ids are therefore kept, not dropped: the server
+ * archives the outgoing dates against those ids, and every photo already
+ * uploaded stays on the campaign, tagged with the term it was taken under.
+ *
+ * Each location is shifted on its own, keeping its original length, so a
+ * campaign whose placements ran to different end dates renews as the same
+ * staggered set rather than being flattened onto one term. The new term starts
+ * the day after the old one ended — or today, if that has already passed, so
+ * renewing a long-expired campaign never proposes dates in the past.
+ *
+ * Every status resets to LIVE: a renewal is a fresh booking, not a
+ * continuation of whatever state the last one finished in.
+ */
+function renewalDraft(c: CampaignRow): CampaignDraft {
+  const today = businessToday();
+
+  return {
+    clientId: c.client.id,
+    salesId: c.sales.id,
+    category: c.category,
+    locations: c.locations.map((l): LocationDraft => {
+      const oldStart = startOfDay(new Date(l.startDate));
+      const oldEnd = startOfDay(new Date(l.endDate));
+      const start = new Date(
+        Math.max(addDays(oldEnd, 1).getTime(), today.getTime()),
+      );
+      const shift = Math.round((start.getTime() - oldStart.getTime()) / MS_PER_DAY);
+
+      return {
+        id: l.id,
+        city: l.city,
+        location: l.location,
+        medium: l.medium,
+        type: l.type,
+        width: sizeText(l.width),
+        height: sizeText(l.height),
+        sqft: sizeText(l.sqft),
+        vendorId: l.vendor.id,
+        startDate: toDateInputValue(start),
+        midDate: l.midDate
+          ? toDateInputValue(addDays(startOfDay(new Date(l.midDate)), shift))
+          : "",
+        endDate: toDateInputValue(addDays(oldEnd, shift)),
+        status: "LIVE",
+      };
+    }),
+  };
+}
+
+export function CampaignManager({
+  isAdmin = false,
+  currentUserId,
+}: {
+  /** True for an ADMIN_EMAILS account — every user's campaigns show up here,
+   * with an Owner column, but only the admin's own rows stay editable. */
+  isAdmin?: boolean;
+  currentUserId?: string;
+}) {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [mode, setMode] = useState<CampaignFormMode>("create");
   const [draft, setDraft] = useState<CampaignDraft>(emptyCampaign);
+  // Bumped on every open so the form remounts with fresh step state, even when
+  // the same campaign is reopened or two renewals are started back to back.
+  const [formNonce, setFormNonce] = useState(0);
   const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
 
   const table = useTableState();
@@ -121,6 +201,7 @@ export function CampaignManager() {
   const stats = statsQuery.data;
 
   const saveCampaign = useSaveCampaign();
+  const renewCampaign = useRenewCampaign();
   const deleteCampaign = useDeleteCampaign();
   const sendReminderMutation = useSendReminder();
 
@@ -132,6 +213,13 @@ export function CampaignManager() {
 
   const campaigns = query.data?.rows ?? [];
 
+  // `owner` is only ever populated for an admin's all-users query — a normal
+  // user's rows never carry one, so this is always true for them.
+  const isOwn = useCallback(
+    (c: CampaignRow) => !c.owner || c.owner.id === currentUserId,
+    [currentUserId],
+  );
+
   function setFilter(next: CampaignStatusFilter) {
     setStatusFilter(next);
     // The new filter has its own row count, so any offset into the old one is
@@ -141,39 +229,78 @@ export function CampaignManager() {
 
   function openAdd() {
     setEditingId(null);
+    setMode("create");
     setDraft(emptyCampaign());
+    setFormNonce((n) => n + 1);
     setOpen(true);
   }
 
   const openEdit = useCallback((c: CampaignRow) => {
     setEditingId(c.id);
+    setMode("edit");
     setDraft(toDraft(c));
+    setFormNonce((n) => n + 1);
     setOpen(true);
   }, []);
 
+  /** Roll the campaign into its next term, in place — see renewalDraft(). */
+  const openRenew = useCallback((c: CampaignRow) => {
+    // The id is kept: a renewal updates this campaign rather than writing a
+    // second one, so its photos and history stay with it.
+    setEditingId(c.id);
+    setMode("renew");
+    setDraft(renewalDraft(c));
+    setFormNonce((n) => n + 1);
+    setOpen(true);
+  }, []);
+
+  /** The location fields as both endpoints want them. */
+  function locationPayload(l: LocationDraft) {
+    return {
+      ...(l.id ? { id: l.id } : {}),
+      city: l.city,
+      location: l.location,
+      medium: l.medium,
+      // Sent as the raw input strings — the API's zod schema coerces them and
+      // turns "" into "not set" rather than 0.
+      type: l.type,
+      width: l.width,
+      height: l.height,
+      sqft: l.sqft,
+      vendorId: l.vendorId,
+      startDate: l.startDate,
+      midDate: l.midDate,
+      endDate: l.endDate,
+      status: l.status,
+    };
+  }
+
+  // Closing the dialog is a local UI concern, so it stays here — and only
+  // fires on success, leaving the form intact if the write failed.
+  const closeOnSuccess = { onSuccess: () => setOpen(false) };
+
   function save() {
+    const locations = draft.locations.map(locationPayload);
+
+    // A renewal is neither a create nor a PATCH: it archives the current term
+    // and restarts the reminder series, and it must not apply PATCH's
+    // "anything omitted is deleted" rule to locations that weren't rebooked.
+    if (mode === "renew" && editingId) {
+      renewCampaign.mutate({ id: editingId, locations }, closeOnSuccess);
+      return;
+    }
+
     saveCampaign.mutate(
       {
         id: editingId,
         payload: {
           clientId: draft.clientId,
           salesId: draft.salesId,
-          locations: draft.locations.map((l) => ({
-            ...(l.id ? { id: l.id } : {}),
-            city: l.city,
-            location: l.location,
-            type: l.type,
-            vendorId: l.vendorId,
-            startDate: l.startDate,
-            midDate: l.midDate,
-            endDate: l.endDate,
-            status: l.status,
-          })),
+          category: draft.category,
+          locations,
         },
       },
-      // Closing the dialog is a local UI concern, so it stays here — and only
-      // fires on success, leaving the form intact if the write failed.
-      { onSuccess: () => setOpen(false) },
+      closeOnSuccess,
     );
   }
 
@@ -204,12 +331,29 @@ export function CampaignManager() {
 
   const columns = useMemo<ColumnDef<CampaignRow>[]>(
     () => [
+      ...(isAdmin
+        ? [
+            {
+              id: "owner",
+              accessorFn: (c: CampaignRow) => c.owner?.name ?? "",
+              header: "Owner",
+            } satisfies ColumnDef<CampaignRow>,
+          ]
+        : []),
       {
         id: "client",
         accessorFn: (c) => c.client.name,
         header: "Client",
-        cell: ({ getValue }) => (
-          <span className="font-medium">{getValue<string>()}</span>
+        cell: ({ row, getValue }) => (
+          <span className="flex items-center gap-1.5">
+            <span className="font-medium">{getValue<string>()}</span>
+            {/* Only worth the space once a campaign has actually been renewed. */}
+            {row.original.term > 1 && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                Term {row.original.term}
+              </span>
+            )}
+          </span>
         ),
       },
       {
@@ -218,10 +362,21 @@ export function CampaignManager() {
         header: "Sales",
       },
       {
+        id: "category",
+        accessorFn: (c) => c.category,
+        header: "Category",
+        enableSorting: false,
+        cell: ({ getValue }) => (
+          <span className="text-muted-foreground">
+            {getValue<string>() || "—"}
+          </span>
+        ),
+      },
+      {
         id: "locations",
-        // The search term now goes to the server, which matches it against
-        // every location's name, city, type and vendor — see buildSearch()
-        // in lib/data.ts.
+        // The search term now goes to the server, which matches it against the
+        // campaign's category and every location's name, city, medium, type and
+        // vendor — see buildSearch() in lib/data.ts.
         header: "Locations",
         enableSorting: false,
         cell: ({ row }) => {
@@ -300,28 +455,36 @@ export function CampaignManager() {
         header: "",
         enableSorting: false,
         meta: { className: "w-0 text-right" },
-        cell: ({ row }) => (
-          <RowActions>
-            <DropdownMenuItem
-              disabled={!anyLive(row.original)}
-              onClick={() => sendReminder(row.original)}
-            >
-              Send reminder (all live)
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openEdit(row.original)}>
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => remove(row.original)}
-            >
-              Delete
-            </DropdownMenuItem>
-          </RowActions>
-        ),
+        cell: ({ row }) => {
+          // An admin can only manage their own campaigns — another user's row
+          // shows no actions at all, matching the view-only scope.
+          if (!isOwn(row.original)) return null;
+          return (
+            <RowActions>
+              <DropdownMenuItem
+                disabled={!anyLive(row.original)}
+                onClick={() => sendReminder(row.original)}
+              >
+                Send reminder (all live)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openEdit(row.original)}>
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openRenew(row.original)}>
+                Renew
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => remove(row.original)}
+              >
+                Delete
+              </DropdownMenuItem>
+            </RowActions>
+          );
+        },
       },
     ],
-    [openEdit, remove, sendReminder],
+    [isAdmin, isOwn, openEdit, openRenew, remove, sendReminder],
   );
 
   const renderLocations = useCallback(
@@ -332,6 +495,10 @@ export function CampaignManager() {
             <tr className="text-left text-xs text-muted-foreground">
               <th className="pb-2 pr-4 font-medium">Location</th>
               <th className="pb-2 pr-4 font-medium">City</th>
+              <th className="pb-2 pr-4 font-medium">Medium</th>
+              <th className="pb-2 pr-4 font-medium">W</th>
+              <th className="pb-2 pr-4 font-medium">H</th>
+              <th className="pb-2 pr-4 font-medium">SQFT</th>
               <th className="pb-2 pr-4 font-medium">Type</th>
               <th className="pb-2 pr-4 font-medium">Vendor</th>
               <th className="pb-2 pr-4 font-medium">Start</th>
@@ -353,7 +520,17 @@ export function CampaignManager() {
                 >
                   <td className="py-2 pr-4">{l.location}</td>
                   <td className="py-2 pr-4">{l.city}</td>
-                  <td className="py-2 pr-4">{l.type}</td>
+                  <td className="py-2 pr-4">{l.medium}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.width ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.height ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {l.sqft ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4">{l.type || "—"}</td>
                   <td className="py-2 pr-4">{l.vendor.name}</td>
                   <td className="py-2 pr-4 text-muted-foreground">
                     {formatDate(l.startDate)}
@@ -391,17 +568,19 @@ export function CampaignManager() {
                     <StatusBadge status={l.status} endDate={l.endDate} />
                   </td>
                   <td className="py-2 text-right">
-                    <RowActions>
-                      <DropdownMenuItem
-                        disabled={ended}
-                        onClick={() => sendReminder(c, l.id)}
-                      >
-                        Send reminder
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openEdit(c)}>
-                        Edit campaign
-                      </DropdownMenuItem>
-                    </RowActions>
+                    {isOwn(c) && (
+                      <RowActions>
+                        <DropdownMenuItem
+                          disabled={ended}
+                          onClick={() => sendReminder(c, l.id)}
+                        >
+                          Send reminder
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEdit(c)}>
+                          Edit campaign
+                        </DropdownMenuItem>
+                      </RowActions>
+                    )}
                   </td>
                 </tr>
               );
@@ -410,7 +589,7 @@ export function CampaignManager() {
         </table>
       </div>
     ),
-    [openEdit, sendReminder],
+    [isOwn, openEdit, sendReminder],
   );
 
   return (
@@ -535,16 +714,20 @@ export function CampaignManager() {
         <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              {editingId ? "Edit campaign" : "New campaign"}
+              {mode === "edit"
+                ? "Edit campaign"
+                : mode === "renew"
+                  ? "Renew campaign"
+                  : "New campaign"}
             </DialogTitle>
           </DialogHeader>
 
           <CampaignForm
-            key={editingId ?? "new"}
+            key={formNonce}
             draft={draft}
             setDraft={setDraft}
-            editing={Boolean(editingId)}
-            saving={saveCampaign.isPending}
+            mode={mode}
+            saving={saveCampaign.isPending || renewCampaign.isPending}
             onSubmit={save}
             onCancel={() => setOpen(false)}
           />
