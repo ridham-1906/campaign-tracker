@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
-import { formatDate } from "@/lib/campaign";
+import { formatDate, lifecycleState } from "@/lib/campaign";
 import {
   useDashboardQuery,
   useDashboardStatsQuery,
@@ -25,6 +25,19 @@ function earliestStart(c: Row) {
 
 function latestEnd(c: Row) {
   return Math.max(...c.locations.map((l) => new Date(l.endDate).getTime()));
+}
+
+/** Per-state location counts, the same rollup the Campaigns table shows. */
+function stateCounts(c: Row) {
+  const live = c.locations.filter(
+    (l) => lifecycleState({ status: l.status, endDate: new Date(l.endDate) }) === "LIVE",
+  ).length;
+  const pending = c.locations.filter(
+    (l) =>
+      lifecycleState({ status: l.status, endDate: new Date(l.endDate) }) ===
+      "PENDING_CREATIVE",
+  ).length;
+  return { live, pending, ended: c.locations.length - live - pending };
 }
 
 /**
@@ -83,6 +96,34 @@ export function Dashboard() {
             {formatDate(new Date(latestEnd(row.original)))}
           </span>
         ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        // Filtered via the stat tiles, which query the server.
+        enableSorting: false,
+        cell: ({ row }) => {
+          const { live, pending, ended } = stateCounts(row.original);
+          return (
+            <span className="flex items-center gap-1.5">
+              {live > 0 && (
+                <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  {live} live
+                </span>
+              )}
+              {pending > 0 && (
+                <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+                  {pending} pending creative
+                </span>
+              )}
+              {ended > 0 && (
+                <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {ended} ended
+                </span>
+              )}
+            </span>
+          );
+        },
       },
       {
         id: "backend",
