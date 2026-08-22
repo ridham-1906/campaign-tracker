@@ -52,6 +52,34 @@ campaign to drop a location*. Both go through `deleteAttachmentsFor()` in
 either regresses nothing throws: the rows just become unreachable and the blobs
 keep costing storage. `npm run check:attachments` sweeps for exactly that.
 
+## File transfer — bytes bypass the app
+
+Vercel caps a function's request **and** response body at ~4.5MB, below our own
+limits (25MB images, 100MB documents), so files move browser ⇄ Appwrite
+directly and only metadata goes through the API.
+
+- **Upload** is two calls: `POST .../attachments/upload-ticket` checks ownership
+  and the image type, mints a create-only Appwrite JWT, and signs the file ids
+  it generated into a ticket; the browser uploads with the `appwrite` web SDK
+  (chunked, with real progress); `POST .../attachments` then registers each file
+  from `{ticket, fileId}`, reading filename/mime/size back from Appwrite rather
+  than trusting the client.
+- **Download** — both `GET .../attachments/:id` and the public
+  `GET /api/share/:token/files/:id` keep their access check and then redirect to
+  a short-lived Appwrite file token (1h and 10min respectively).
+
+Two things this depends on, neither visible in the code:
+
+- The Appwrite project must list the app's origins as **web platforms**, or the
+  gallery, ZIP download and PPT export fail on CORS. The bucket grants `create`
+  to `APPWRITE_UPLOAD_USER_ID` and nothing else.
+- Deleting a share no longer cuts access instantly — an already-issued preview
+  URL keeps working for up to 10 minutes.
+
+⚠️ A blob now exists **before** its Mongo row, so an abandoned upload leaves an
+orphaned file. `check-attachments` sweeps rows-without-files, not
+files-without-rows.
+
 Models live one-per-file in `src/models/`, re-exported from `src/models/index.ts`.
 
 ## Dates — important
@@ -189,7 +217,8 @@ npm run check:attachments -- --delete   # ...and remove them + their blobs
 ```
 
 `check-attachments.ts` is the guard for the cascade risk above; a clean run
-means every attachment row still resolves to a live campaign and location.
+means every attachment row still resolves to a live campaign and location. It
+does **not** yet sweep the opposite direction — see "File transfer" below.
 
 `migrate-reminders.ts` normalises `reminderDate` / `reminderSent` to the series
 model and backfills `creativeReminderSentAt`. Idempotent, and it calls
@@ -207,7 +236,8 @@ Next, hence `--conditions=react-server` (to satisfy `server-only`) and
 ## Environment
 
 `MONGODB_URI` · `JWT_SECRET` · `CRON_SECRET` · `REGISTER_SECRET` ·
-`ENCRYPTION_KEY` · `APPWRITE_*` · optional `REMINDER_USER_CONCURRENCY`,
+`ENCRYPTION_KEY` · `APPWRITE_*` (including `APPWRITE_UPLOAD_USER_ID`, the
+create-only identity browsers upload as) · optional `REMINDER_USER_CONCURRENCY`,
 `REMINDER_TIME_BUDGET_MS`, `REMINDER_ERROR_REPORT_TO`.
 
 ## Known issues

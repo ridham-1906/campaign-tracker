@@ -45,8 +45,8 @@ export const DOCUMENT_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
 ] as const;
 
-export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20MB
-export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024; // 50MB
+export const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB
+export const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024; // 100MB
 
 export const IMAGE_ACCEPT = IMAGE_MIME_TYPES.join(",");
 export const DOCUMENT_ACCEPT = DOCUMENT_MIME_TYPES.join(",");
@@ -124,20 +124,35 @@ export function formatAttachmentSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Validate an uploaded file against the rules for its attachment kind. */
-export function validateAttachmentFile(
+/**
+ * Validate stored file metadata against the rules for its attachment kind.
+ *
+ * Takes the two fields rather than a `File` because uploads now go straight
+ * from the browser to Appwrite: the server re-checks what Appwrite reports the
+ * blob to be, not what the client claimed before sending it.
+ */
+export function validateAttachmentMeta(
   kind: "image" | "document",
-  file: { type: string; size: number },
+  mimeType: string,
+  size: number,
 ): string | null {
   const allowed: readonly string[] =
     kind === "image" ? IMAGE_MIME_TYPES : DOCUMENT_MIME_TYPES;
   const max = kind === "image" ? MAX_IMAGE_BYTES : MAX_DOCUMENT_BYTES;
 
-  if (!allowed.includes(file.type)) {
-    return `Unsupported file type: ${file.type || "unknown"}`;
+  if (!allowed.includes(mimeType)) {
+    return `Unsupported file type: ${mimeType || "unknown"}`;
   }
-  if (file.size > max) {
+  if (size > max) {
     return `File too large (max ${Math.round(max / 1024 / 1024)}MB)`;
   }
   return null;
+}
+
+/** Validate a picked file before it is queued for upload. */
+export function validateAttachmentFile(
+  kind: "image" | "document",
+  file: { type: string; size: number },
+): string | null {
+  return validateAttachmentMeta(kind, file.type, file.size);
 }

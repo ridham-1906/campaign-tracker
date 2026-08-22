@@ -1,99 +1,113 @@
 import { z } from "zod";
-import { ID } from "node-appwrite";
-import { getBucketId, getStorage } from "@/lib/appwrite";
-import { ATTACHMENT_KINDS, PHOTO_TYPES, validateAttachmentFile } from "@/lib/attachments";
+import { getBucketId, getStorage, verifyUploadTicket } from "@/lib/appwrite";
+import { validateAttachmentMeta } from "@/lib/attachments";
 import { deleteAttachmentsFor, findOwnedLocation, isValidId } from "@/lib/services";
 import { attachmentViewFrom } from "@/lib/data";
 import { Attachment, ImageType } from "@/models";
-import { authGuard, badRequest, created, notFound, ok, readJson } from "@/lib/api";
+import {
+  authGuard,
+  badRequest,
+  conflict,
+  created,
+  notFound,
+  ok,
+  readJson,
+} from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string; locationId: string }> };
 
-const fieldsSchema = z
-  .object({
-    kind: z.enum(ATTACHMENT_KINDS),
-    imageTypeId: z.string().refine(isValidId, "Invalid image type").optional(),
-    photoType: z.enum(PHOTO_TYPES).optional(),
-  })
-  .refine((d) => d.kind !== "image" || Boolean(d.imageTypeId), {
-    message: "imageTypeId is required for image attachments",
-    path: ["imageTypeId"],
-  })
-  .refine((d) => d.kind !== "image" || Boolean(d.photoType), {
-    message: "photoType is required for image attachments",
-    path: ["photoType"],
-  });
+const registerSchema = z.object({
+  ticket: z.string().min(1),
+  fileId: z.string().min(1).max(36),
+});
 
 /** Omit `ids` to clear every attachment on the location. */
 const deleteSchema = z.object({
   ids: z.array(z.string().refine(isValidId, "Invalid attachment id")).optional(),
 });
 
-/** Upload one photo or document onto a location. Its own endpoint so a
- * single-file upload never has to resend the whole campaign form. */
+/**
+ * Register a file the browser has just uploaded straight to Appwrite.
+ *
+ * This used to take the file itself as multipart, which Vercel caps at ~4.5MB —
+ * well under our own limits, so any large photo failed at the edge before the
+ * handler ran. The bytes now go browser → Appwrite (see ./upload-ticket) and
+ * only this small metadata write comes back to us.
+ *
+ * Nothing here is taken on trust: the kind and image type come from the signed
+ * ticket, and the filename, mime type and size are read back from Appwrite
+ * rather than accepted from the caller.
+ */
 export async function POST(req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
   const { id, locationId } = await params;
 
-  // Still the ownership check, even though the write no longer touches the
-  // campaign document — it proves the (campaign, location) pair is the
-  // caller's before anything is stored against it.
+  const body = await readJson(req);
+  if ("error" in body) return body.error;
+  const parsed = registerSchema.safeParse(body.data);
+  if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
+
+  const ticket = await verifyUploadTicket(parsed.data.ticket);
+  if (!ticket) return badRequest("Upload ticket is invalid or has expired");
+
+  // The ticket is bound to one user, one location and one set of file ids, so
+  // a valid ticket can't be replayed against a different location or used to
+  // claim a blob it didn't cover.
+  if (
+    ticket.userId !== auth.session.userId ||
+    ticket.campaignId !== id ||
+    ticket.locationId !== locationId ||
+    !ticket.fileIds.includes(parsed.data.fileId)
+  ) {
+    return badRequest("Upload ticket does not cover this file");
+  }
+
   const found = await findOwnedLocation(auth.session.userId, id, locationId);
   if (!found) return notFound("Location not found");
 
-  let formData: FormData;
-  try {
-    formData = await req.formData();
-  } catch {
-    return badRequest("Invalid form data");
+  // A retried registration must not insert the same blob twice; `fileId` has
+  // no unique index to fall back on.
+  if (await Attachment.exists({ fileId: parsed.data.fileId })) {
+    return conflict("This file has already been registered");
   }
 
-  const file = formData.get("file");
-  if (!(file instanceof File)) return badRequest("Missing file");
+  const storage = getStorage();
+  const bucketId = getBucketId();
+  let stored;
+  try {
+    stored = await storage.getFile({ bucketId, fileId: parsed.data.fileId });
+  } catch {
+    return badRequest("Upload not found — the file was never finished");
+  }
 
-  const parsed = fieldsSchema.safeParse({
-    kind: formData.get("kind"),
-    imageTypeId: formData.get("imageTypeId") ?? undefined,
-    photoType: formData.get("photoType") ?? undefined,
-  });
-  if (!parsed.success) return badRequest("Validation failed", parsed.error.issues);
+  const fileErr = validateAttachmentMeta(
+    ticket.kind,
+    stored.mimeType,
+    stored.sizeOriginal,
+  );
+  if (fileErr) {
+    await storage.deleteFile({ bucketId, fileId: parsed.data.fileId }).catch(() => {});
+    return badRequest(fileErr);
+  }
 
-  const fileErr = validateAttachmentFile(parsed.data.kind, file);
-  if (fileErr) return badRequest(fileErr);
-
-  // Resolved once up front: its `role` becomes the derived `stage`, and its
-  // name goes straight into the response so the UI doesn't need a refetch to
-  // show what was just picked.
+  // Resolved here rather than trusted from the ticket: its `role` becomes the
+  // derived `stage`, and its name goes straight into the response so the UI
+  // doesn't need a refetch to show what was just added.
   let imageType: InstanceType<typeof ImageType> | null = null;
-  if (parsed.data.kind === "image") {
+  if (ticket.kind === "image") {
     imageType = await ImageType.findOne({
-      _id: parsed.data.imageTypeId,
+      _id: ticket.imageTypeId,
       userId: auth.session.userId,
     });
     if (!imageType) return badRequest("Invalid image type");
   }
 
-  const storage = getStorage();
-  const bucketId = getBucketId();
-  // Hand the request's own `File` to the SDK rather than wrapping it in
-  // `InputFile`: the SDK's uploader recognises the payload via `instanceof`,
-  // and the bundler resolves `node-appwrite/file` to a different module copy
-  // than the one `node-appwrite` itself loads, so an `InputFile` fails that
-  // check with "File not found in payload". `File` is the global in both.
-  const uploaded = await storage.createFile({
-    bucketId,
-    fileId: ID.unique(),
-    file,
-  });
-
   let saved;
   try {
-    // One small insert. This used to push onto the embedded array and then
-    // campaign.save(), rewriting the whole campaign document per file.
     saved = await Attachment.create({
       userId: auth.session.userId,
       campaignId: found.campaign._id,
@@ -102,18 +116,18 @@ export async function POST(req: Request, { params }: Params) {
       // moves the campaign on to the next term, and this photo documents the
       // one it was actually taken under.
       term: found.campaign.term ?? 1,
-      kind: parsed.data.kind,
+      kind: ticket.kind,
       stage: imageType?.role ?? null,
       imageTypeId: imageType?._id ?? null,
-      photoType: parsed.data.kind === "image" ? parsed.data.photoType : null,
-      fileId: uploaded.$id,
-      filename: file.name,
-      mimeType: file.type,
-      size: file.size,
+      photoType: ticket.kind === "image" ? ticket.photoType : null,
+      fileId: stored.$id,
+      filename: stored.name,
+      mimeType: stored.mimeType,
+      size: stored.sizeOriginal,
     });
   } catch (err) {
     // Don't leave an orphaned blob behind if the metadata write failed.
-    await storage.deleteFile({ bucketId, fileId: uploaded.$id }).catch(() => {});
+    await storage.deleteFile({ bucketId, fileId: stored.$id }).catch(() => {});
     throw err;
   }
 
