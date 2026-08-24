@@ -219,7 +219,24 @@ npm run migrate -- --target=prod --yes  # apply it
 
 npm run check:attachments               # sweep for orphaned attachments
 npm run check:attachments -- --delete   # ...and remove them + their blobs
+
+npm run migrate:bucket                            # dry run: counts + preflight
+npm run migrate:bucket -- --execute --yes         # copy source -> target
+npm run migrate:bucket -- --verify                # compare, write nothing
+npm run migrate:bucket -- --rollback --yes        # undo this run's copies
+npm run migrate:bucket -- --reverse --execute --yes  # post-cutover rollback
 ```
+
+`migrate-bucket.ts` moves every blob to a bucket on another Appwrite account,
+recreating each file under its **existing `fileId`** — so the database is never
+touched and cutover is purely an env change (`APPWRITE_*`, including
+`APPWRITE_UPLOAD_USER_ID`, which is per-project and must be recreated there).
+It has no code path that deletes from the source: the old bucket is the
+rollback. Resumable, verified by Appwrite's `signature` + size, and it aborts on
+10 consecutive failures or a >5% failure rate. Credentials for both accounts and
+the Mongo URI are filled into the `CONFIG` block at the top of the script — it
+reads nothing from the environment, since the two accounts never coexist in one
+`.env`. Blank them out again when the migration is done.
 
 `check-attachments.ts` is the guard for the cascade risk above; a clean run
 means every attachment row still resolves to a live campaign and location. It
