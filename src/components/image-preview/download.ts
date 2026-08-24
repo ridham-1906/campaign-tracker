@@ -13,8 +13,8 @@ export function safeName(name: string) {
   return name.replace(/[/\\?%*:|"<>]/g, "-");
 }
 
-/** Same-origin `download` overrides the route's inline Content-Disposition, so
- * a single file needs no fetch — just a click on a hidden link. */
+/** A hidden link click, so a single file streams straight to disk instead of
+ * being buffered into a blob first — a 100MB deck costs no memory this way. */
 function saveUrl(url: string, filename: string) {
   const a = document.createElement("a");
   a.href = url;
@@ -60,7 +60,10 @@ export function useAttachmentDownload() {
     if (items.length === 0 || zipping) return;
 
     if (items.length === 1) {
-      saveUrl(items[0].url, safeName(items[0].filename));
+      // `?download=1` rather than the `download` attribute below: the route
+      // redirects to Appwrite, and browsers drop that attribute across an
+      // origin change, so the disposition has to come from Appwrite itself.
+      saveUrl(`${items[0].url}?download=1`, safeName(items[0].filename));
       return;
     }
 
@@ -73,8 +76,10 @@ export function useAttachmentDownload() {
       const zip = new JSZip();
 
       // Bounded concurrency rather than one-at-a-time: each file is a separate
-      // round trip through our API, so serialising them made a 20-image bundle
-      // take 20× the latency.
+      // round trip, so serialising them made a 20-image bundle take 20× the
+      // latency. The zip is built entirely in the browser and the bytes come
+      // straight from Appwrite, so bundle size is bounded by memory here, not
+      // by any serverless response limit.
       const queue = uniqueNames(items);
       await Promise.all(
         Array.from({ length: Math.min(ZIP_CONCURRENCY, queue.length) }, async () => {

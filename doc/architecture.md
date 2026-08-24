@@ -94,6 +94,34 @@ which removes the rows and their Appwrite blobs. If either regresses the failure
 is silent: the rows just become unreachable and the blobs keep costing storage.
 `npm run check:attachments` sweeps for exactly that.
 
+### File bytes never pass through the app
+
+Vercel caps a function's request body **and** its response body at ~4.5MB, well
+under this app's own limits (25MB per image, 100MB per document). So neither
+direction can be proxied:
+
+- **Upload.** `POST .../attachments/upload-ticket` does every check up front —
+  ownership, kind, image type — then mints a create-only Appwrite JWT and signs
+  the file ids it generated into a ticket. The browser uploads straight to
+  Appwrite with the web SDK (which chunks anything over 5MB and reports
+  progress), then posts the ticket back to `POST .../attachments` to register
+  each file. That register step re-reads the filename, mime type and size from
+  Appwrite rather than trusting the client, and only honours a file id the
+  ticket covered.
+- **Download.** `GET .../attachments/:id` and its public twin
+  `GET /api/share/:token/files/:id` still do the access check, then redirect to a
+  short-lived Appwrite file token instead of returning bytes.
+
+Two consequences worth knowing:
+
+1. Appwrite must list this app's origins as **web platforms**, since the
+   gallery, ZIP download and PPT export now read cross-origin. The bucket
+   grants `create` to one dedicated upload user (`APPWRITE_UPLOAD_USER_ID`) and
+   nothing else; the admin API key still does every read, update and delete.
+2. A blob now exists *before* its Mongo row, so a browser closed mid-batch
+   leaves an unreferenced file. This is the opposite direction from the cascade
+   risk above, and `check-attachments` does not sweep for it yet.
+
 ### Derived status
 
 A location's stored `status` is `LIVE` / `ENDED` / `PENDING_CREATIVE`. The state

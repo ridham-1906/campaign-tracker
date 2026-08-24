@@ -195,8 +195,34 @@ location names are matched by `q` but never returned.
 
 The files themselves aren't listed here. The preview dialog reads
 `GET /api/campaigns/:id`, which already carries every location's attachments,
-and streams each file from
-`/api/campaigns/:id/locations/:locationId/attachments/:attachmentId`.
+and loads each file from
+`/api/campaigns/:id/locations/:locationId/attachments/:attachmentId` — which
+checks ownership and then **redirects** to a short-lived Appwrite URL rather
+than returning the bytes itself. Add `?download=1` to get an attachment
+disposition instead of an inline one; a link click needs it, because `<a
+download>` stops applying once the href crosses to another origin. The public
+twin, `/api/share/:token/files/:attachmentId`, behaves the same way.
+
+Bulk downloads and the PPT export are built **in the browser** — they fetch each
+file from these routes, follow the redirect to Appwrite, and zip locally. No
+endpoint returns a bundle.
+
+### Uploading a file
+
+Two calls, because Vercel caps a request body at ~4.5MB and the bytes therefore
+can't come through this API at all.
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| `POST` | `…/attachments/upload-ticket` | `{kind, imageTypeId?, photoType?, count}` | Authorises a batch. Returns `{endpoint, projectId, bucketId, jwt, ticket, fileIds, expiresAt}` |
+| `POST` | `…/attachments` | `{ticket, fileId}` | Registers one file the client has uploaded. Returns the `AttachmentView` |
+
+Between the two, the client uploads each file to Appwrite itself using the
+returned `jwt` and the matching id from `fileIds`. The register call rejects a
+`fileId` the ticket didn't cover, a file Appwrite has no record of, one already
+registered (`409`), and anything whose stored mime type or size breaks the
+limits — the filename, mime type and size are read back from Appwrite, never
+taken from the request.
 
 ### Create body
 

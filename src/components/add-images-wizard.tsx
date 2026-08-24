@@ -173,7 +173,9 @@ export function AddImagesWizard({
               {upload.busy ? (
                 <>
                   <Loader2Icon className="animate-spin" />
-                  Uploading…
+                  {upload.progressLabel
+                    ? `Uploading ${upload.progressLabel}`
+                    : "Uploading…"}
                 </>
               ) : (
                 <>

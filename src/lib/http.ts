@@ -9,10 +9,8 @@ export type ApiResult<T = unknown> = {
 
 /**
  * Module-private since the React Query migration: everything goes through the
- * throwing `apiJson`/`apiUploadJson` below, because a query only counts as
- * failed if its function rejects. These stay as the shared plumbing rather
- * than being inlined, so the JSON and multipart paths don't duplicate the
- * response-parsing dance.
+ * throwing `apiJson` below, because a query only counts as failed if its
+ * function rejects.
  */
 async function apiFetch<T = unknown>(
   path: string,
@@ -24,31 +22,6 @@ async function apiFetch<T = unknown>(
       "Content-Type": "application/json",
       ...(options.headers ?? {}),
     },
-  });
-  let data: unknown = null;
-  try {
-    data = await res.json();
-  } catch {
-    // no body
-  }
-  return { ok: res.ok, status: res.status, data: data as T };
-}
-
-/**
- * Multipart upload variant of apiFetch(). No Content-Type header is set, so
- * the browser fills in its own `multipart/form-data; boundary=...` — setting
- * one manually (as apiFetch does for JSON) would drop the boundary and break
- * the upload.
- */
-async function apiUpload<T = unknown>(
-  path: string,
-  formData: FormData,
-  options: Omit<RequestInit, "body" | "headers"> = {},
-): Promise<ApiResult<T>> {
-  const res = await fetch(path, {
-    method: "POST",
-    ...options,
-    body: formData,
   });
   let data: unknown = null;
   try {
@@ -93,17 +66,6 @@ export async function apiJson<T = unknown>(
   options: RequestInit = {},
 ): Promise<T> {
   const res = await apiFetch<T>(path, options);
-  if (!res.ok) throw new ApiError(res.status, res.data);
-  return res.data;
-}
-
-/** Throwing variant of apiUpload(). The same multipart caveat applies. */
-export async function apiUploadJson<T = unknown>(
-  path: string,
-  formData: FormData,
-  options: Omit<RequestInit, "body" | "headers"> = {},
-): Promise<T> {
-  const res = await apiUpload<T>(path, formData, options);
   if (!res.ok) throw new ApiError(res.status, res.data);
   return res.data;
 }

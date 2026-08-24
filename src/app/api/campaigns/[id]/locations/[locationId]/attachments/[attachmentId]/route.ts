@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { getBucketId, getStorage } from "@/lib/appwrite";
+import { NextResponse } from "next/server";
+import { createFileViewUrl, getBucketId, getStorage } from "@/lib/appwrite";
 import { isValidId } from "@/lib/services";
 import { connectDB } from "@/lib/db";
 import { Attachment, ImageType } from "@/models";
@@ -45,12 +46,26 @@ async function findOwned(
   });
 }
 
-/** View/download a single attachment. Streamed through us — the browser
- * never talks to Appwrite directly, same as every other read in this app. */
-export async function GET(_req: Request, { params }: Params) {
+/**
+ * View/download a single attachment.
+ *
+ * The ownership check still happens here, but the bytes no longer do: this used
+ * to buffer the whole blob and return it, which Vercel caps at ~4.5MB per
+ * response — so a large photo could be stored and then never shown. We redirect
+ * to a short-lived Appwrite file token instead, and the browser fetches it
+ * directly. That means Appwrite must list this app's domains as web platforms,
+ * since the gallery, ZIP download and PPT export now read cross-origin.
+ *
+ * `?download=1` asks Appwrite for an attachment disposition — a link click
+ * needs that, because the `<a download>` attribute stops applying once the
+ * href redirects to another origin.
+ */
+export async function GET(req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
   const { id, locationId, attachmentId } = await params;
+  const asDownload =
+    new URL(req.url).searchParams.get("download") === "1" ? "download" : "view";
 
   const attachment = await findOwned(
     auth.session.userId,
@@ -60,24 +75,19 @@ export async function GET(_req: Request, { params }: Params) {
   );
   if (!attachment) return notFound("Attachment not found");
 
-  let bytes: ArrayBuffer;
+  let url: string;
   try {
-    bytes = await getStorage().getFileView({
-      bucketId: getBucketId(),
-      fileId: attachment.fileId,
-    });
+    url = await createFileViewUrl(attachment.fileId, undefined, asDownload);
   } catch {
     return notFound("File not found");
   }
 
-  return new Response(bytes, {
-    headers: {
-      "Content-Type": attachment.mimeType,
-      "Content-Disposition": `inline; filename="${encodeURIComponent(attachment.filename)}"`,
-      "Content-Length": String(bytes.byteLength),
-      "Cache-Control": "private, max-age=0, must-revalidate",
-    },
-  });
+  const res = NextResponse.redirect(url, 307);
+  // Well inside the token's own hour, so a cached redirect can never outlive
+  // the token it points at — and a 50-thumbnail gallery doesn't mint 50 tokens
+  // on every render.
+  res.headers.set("Cache-Control", "private, max-age=600");
+  return res;
 }
 
 /** Reclassify an image's stage and/or photo type after the fact — the

@@ -77,6 +77,11 @@ export function useLocationUpload({
 
   const uploadAttachments = useUploadAttachments();
   const busy = uploadAttachments.isPending;
+  // Real per-byte progress, which only became possible once the bytes stopped
+  // going through our own API — fetch() can't report upload progress.
+  const [progress, setProgress] = useState<{ done: number; total: number; pct: number } | null>(
+    null,
+  );
 
   // The picker's default comes from the DB, unlike the old fixed 3-value
   // enum, so it can't be known synchronously — resolved to the matching
@@ -174,8 +179,10 @@ export function useLocationUpload({
         imageTypeId: imageType,
         photoType,
         files: picked.map((p) => p.file),
+        onProgress: (done, total, pct) => setProgress({ done, total, pct }),
       },
       {
+        onSettled: () => setProgress(null),
         onSuccess: ({ uploaded, firstError }) => {
           // Uploads run in order and stop at the first failure, so whatever
           // landed is the front of the queue — drop just those and leave the
@@ -207,6 +214,12 @@ export function useLocationUpload({
     clear,
     submit,
     busy,
+    /** "2 of 5 — 43%" while a batch is in flight, otherwise null. */
+    progressLabel:
+      busy && progress
+        ? `${Math.min(progress.done + 1, progress.total)} of ${progress.total}` +
+          (progress.pct > 0 ? ` — ${Math.round(progress.pct)}%` : "")
+        : null,
     canUpload: picked.length > 0 && !busy,
     count: picked.length,
   };

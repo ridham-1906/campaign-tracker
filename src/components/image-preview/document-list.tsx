@@ -49,7 +49,7 @@ export function DocumentList({
 
           <FileSpreadsheetIcon className="size-4 shrink-0 text-muted-foreground" />
           <a
-            href={doc.url}
+            href={`${doc.url}?download=1`}
             target="_blank"
             rel="noreferrer"
             className="min-w-0 flex-1 truncate underline-offset-2 hover:underline"

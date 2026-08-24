@@ -1,4 +1,5 @@
-import { getBucketId, getStorage } from "@/lib/appwrite";
+import { NextResponse } from "next/server";
+import { createFileViewUrl } from "@/lib/appwrite";
 import { findSharedAttachment } from "@/lib/share";
 import { isValidId } from "@/lib/services";
 import { notFound } from "@/lib/api";
@@ -8,39 +9,49 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ token: string; attachmentId: string }> };
 
+/** How long a minted Appwrite URL stays usable — and so, at worst, how long a
+ * file remains reachable after its share is deleted. Kept short because this
+ * route is public; the session-gated one can afford the default hour. */
+const SHARE_TOKEN_SECONDS = 600;
+
 /**
- * Stream one file behind a preview link — the public twin of the session-gated
- * attachment route. Still proxied through us rather than handing out an
- * Appwrite URL, so the token stays the only way in and can be revoked by
- * deleting the share.
+ * Redirect to one file behind a preview link — the public twin of the
+ * session-gated attachment route. The share token is still the only way to get
+ * here, but the bytes come from Appwrite rather than through us: buffering them
+ * capped this route at Vercel's ~4.5MB response limit, so a large photo could
+ * be uploaded and then never render in a shared preview.
  *
- * These URLs also appear as `<img src>` inside the notification email, so the
- * response has to be plainly cacheable by a mail client's image proxy — but
- * `private` keeps shared caches out of it, since the path carries the secret.
+ * The tradeoff is that deleting a share no longer cuts access instantly — an
+ * already-issued URL keeps working for SHARE_TOKEN_SECONDS.
+ *
+ * These URLs also appear as `<img src>` inside the notification email; mail
+ * image proxies follow the redirect and cache the result, and `private` keeps
+ * shared caches off the redirect itself, since the path carries the secret.
+ *
+ * `?download=1` asks Appwrite for an attachment disposition, which a link click
+ * needs — `<a download>` stops applying across an origin change.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const { token, attachmentId } = await params;
+  const asDownload =
+    new URL(req.url).searchParams.get("download") === "1" ? "download" : "view";
   if (!isValidId(attachmentId)) return notFound("Attachment not found");
 
   const attachment = await findSharedAttachment(token, attachmentId);
   if (!attachment) return notFound("Attachment not found");
 
-  let bytes: ArrayBuffer;
+  let url: string;
   try {
-    bytes = await getStorage().getFileView({
-      bucketId: getBucketId(),
-      fileId: attachment.fileId,
-    });
+    url = await createFileViewUrl(
+      attachment.fileId,
+      SHARE_TOKEN_SECONDS,
+      asDownload,
+    );
   } catch {
     return notFound("File not found");
   }
 
-  return new Response(bytes, {
-    headers: {
-      "Content-Type": attachment.mimeType,
-      "Content-Disposition": `inline; filename="${encodeURIComponent(attachment.filename)}"`,
-      "Content-Length": String(bytes.byteLength),
-      "Cache-Control": "private, max-age=600",
-    },
-  });
+  const res = NextResponse.redirect(url, 307);
+  res.headers.set("Cache-Control", "private, max-age=300");
+  return res;
 }
