@@ -55,11 +55,17 @@ async function findOwned(
  * to a short-lived Appwrite file token instead, and the browser fetches it
  * directly. That means Appwrite must list this app's domains as web platforms,
  * since the gallery, ZIP download and PPT export now read cross-origin.
+ *
+ * `?download=1` asks Appwrite for an attachment disposition — a link click
+ * needs that, because the `<a download>` attribute stops applying once the
+ * href redirects to another origin.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const auth = await authGuard();
   if ("error" in auth) return auth.error;
   const { id, locationId, attachmentId } = await params;
+  const asDownload =
+    new URL(req.url).searchParams.get("download") === "1" ? "download" : "view";
 
   const attachment = await findOwned(
     auth.session.userId,
@@ -71,7 +77,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   let url: string;
   try {
-    url = await createFileViewUrl(attachment.fileId);
+    url = await createFileViewUrl(attachment.fileId, undefined, asDownload);
   } catch {
     return notFound("File not found");
   }

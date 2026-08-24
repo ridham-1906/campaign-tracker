@@ -66,7 +66,12 @@ directly and only metadata goes through the API.
   than trusting the client.
 - **Download** — both `GET .../attachments/:id` and the public
   `GET /api/share/:token/files/:id` keep their access check and then redirect to
-  a short-lived Appwrite file token (1h and 10min respectively).
+  a short-lived Appwrite file token (1h and 10min respectively). `?download=1`
+  switches Appwrite from an inline to an attachment disposition — needed because
+  `<a download>` is ignored once the href redirects cross-origin.
+- **Zips and PPT exports are built in the browser** (JSZip, 4-way concurrent
+  fetch). No route returns a bundle, so their size is bounded by browser memory
+  rather than by any serverless limit.
 
 Two things this depends on, neither visible in the code:
 

@@ -27,9 +27,14 @@ const SHARE_TOKEN_SECONDS = 600;
  * These URLs also appear as `<img src>` inside the notification email; mail
  * image proxies follow the redirect and cache the result, and `private` keeps
  * shared caches off the redirect itself, since the path carries the secret.
+ *
+ * `?download=1` asks Appwrite for an attachment disposition, which a link click
+ * needs — `<a download>` stops applying across an origin change.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const { token, attachmentId } = await params;
+  const asDownload =
+    new URL(req.url).searchParams.get("download") === "1" ? "download" : "view";
   if (!isValidId(attachmentId)) return notFound("Attachment not found");
 
   const attachment = await findSharedAttachment(token, attachmentId);
@@ -37,7 +42,11 @@ export async function GET(_req: Request, { params }: Params) {
 
   let url: string;
   try {
-    url = await createFileViewUrl(attachment.fileId, SHARE_TOKEN_SECONDS);
+    url = await createFileViewUrl(
+      attachment.fileId,
+      SHARE_TOKEN_SECONDS,
+      asDownload,
+    );
   } catch {
     return notFound("File not found");
   }

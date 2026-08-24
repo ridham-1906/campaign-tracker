@@ -108,10 +108,16 @@ export async function mintUploadJwt(): Promise<{ jwt: string; expiresAt: string 
  * `seconds` is how long the minted URL keeps working once handed out, which is
  * also how long it outlives a revoked share — so the public preview route asks
  * for a much shorter one than the session-gated gallery.
+ *
+ * `mode` picks the Appwrite endpoint: `view` serves inline, for `<img>` and the
+ * zip/PPT fetches; `download` sets an attachment disposition, which is what a
+ * plain link click needs — the `download` attribute on an `<a>` is ignored once
+ * the href redirects cross-origin, so the header has to come from Appwrite.
  */
 export async function createFileViewUrl(
   fileId: string,
   seconds: number = VIEW_TOKEN_SECONDS,
+  mode: "view" | "download" = "view",
 ): Promise<string> {
   const { endpoint, projectId, bucketId } = getAppwriteConfig();
   const token = await getTokens().createFileToken({
@@ -121,7 +127,7 @@ export async function createFileViewUrl(
   });
 
   const query = new URLSearchParams({ project: projectId, token: token.secret });
-  return `${endpoint}/storage/buckets/${bucketId}/files/${fileId}/view?${query}`;
+  return `${endpoint}/storage/buckets/${bucketId}/files/${fileId}/${mode}?${query}`;
 }
 
 /**

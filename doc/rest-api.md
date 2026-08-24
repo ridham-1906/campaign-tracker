@@ -198,7 +198,14 @@ The files themselves aren't listed here. The preview dialog reads
 and loads each file from
 `/api/campaigns/:id/locations/:locationId/attachments/:attachmentId` — which
 checks ownership and then **redirects** to a short-lived Appwrite URL rather
-than returning the bytes itself.
+than returning the bytes itself. Add `?download=1` to get an attachment
+disposition instead of an inline one; a link click needs it, because `<a
+download>` stops applying once the href crosses to another origin. The public
+twin, `/api/share/:token/files/:attachmentId`, behaves the same way.
+
+Bulk downloads and the PPT export are built **in the browser** — they fetch each
+file from these routes, follow the redirect to Appwrite, and zip locally. No
+endpoint returns a bundle.
 
 ### Uploading a file
 
