@@ -13,7 +13,8 @@ const bodySchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
-  appPassword: z.string().min(1), // Gmail app password for nodemailer
+  // Gmail app password for nodemailer; without it the user sends no reminders.
+  appPassword: z.string().optional(),
 });
 
 const patchSchema = z
@@ -88,7 +89,9 @@ export async function POST(req: NextRequest) {
     name: parsed.data.name,
     email,
     password: await hashPassword(parsed.data.password),
-    appPassword: encryptSecret(parsed.data.appPassword),
+    appPassword: parsed.data.appPassword
+      ? encryptSecret(parsed.data.appPassword)
+      : "",
   });
 
   return NextResponse.json(

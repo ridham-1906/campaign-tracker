@@ -20,7 +20,7 @@ export type Job = {
   locations: DueLocation[];
   sales?: Person;
   client?: { name: string };
-  owner?: { _id: Types.ObjectId } & Person & { appPassword: string };
+  owner?: { _id: Types.ObjectId } & Person & { appPassword?: string };
 };
 
 /** Day boundaries a kind builds its query from, all in the business timezone. */

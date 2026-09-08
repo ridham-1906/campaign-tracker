@@ -58,6 +58,17 @@ export async function POST(req: Request, { params }: Params) {
     return badRequest("This campaign has no images to share yet");
   }
 
+  // The link is already valid, so hand it back even though no mail can go out.
+  if (!user.appPassword?.trim()) {
+    return NextResponse.json(
+      {
+        error: "No Gmail app password configured for this account",
+        url: previewUrl,
+      },
+      { status: 400 },
+    );
+  }
+
   try {
     await sendMail({
       fromName: user.name,

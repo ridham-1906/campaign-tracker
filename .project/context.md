@@ -21,7 +21,7 @@ Everything except `User` is scoped by `userId`, so each backend person only sees
 their own records.
 
 ```
-User (login)  name, email, password (bcrypt), appPassword (AES-256-GCM)
+User (login)  name, email, password (bcrypt), appPassword (AES-256-GCM, optional)
  ├─ Sales     name, email          ← reminder recipients
  ├─ Vendor    name
  ├─ Client    name
@@ -116,6 +116,11 @@ with `CRON_SECRET` via `cronGuard` in `src/lib/api.ts`:
 
 Dedupe is by `reminderSentAt` / `creativeReminderSentAt` being older than today,
 so re-running the job never double-sends and a missed day is caught up.
+
+`User.appPassword` is **optional**. A user without one sends nothing: their
+campaigns are counted as `skipped` before any transport is opened, so a mailless
+account produces no auth errors. The manual send-reminder and share-images
+routes 400 for the same reason. Clear it in MongoDB to mute a user.
 
 Data flow per run: one aggregation filters and projects server-side and joins
 sales/client/owner → jobs grouped by owning user → sent over that user's pooled
