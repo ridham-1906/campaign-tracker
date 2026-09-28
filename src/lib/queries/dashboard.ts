@@ -2,9 +2,18 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiJson } from "@/lib/http";
-import { type ListKeyParams, queryKeys } from "@/lib/query-keys";
+import {
+  type ListKeyParams,
+  type StatsKeyParams,
+  queryKeys,
+} from "@/lib/query-keys";
 import { listQuery } from "@/lib/queries/entities";
-import type { CampaignListView, CampaignStats, Page } from "@/lib/view-types";
+import type {
+  CampaignListView,
+  CampaignStats,
+  Page,
+  PersonView,
+} from "@/lib/view-types";
 
 /**
  * The shared dashboard's reads. Same shapes as the campaigns screen, different
@@ -20,14 +29,24 @@ export function useDashboardQuery(params: ListKeyParams) {
   });
 }
 
-/** Live/Ended totals — reflects `q`, but never the status filter. */
-export function useDashboardStatsQuery(q?: string) {
+/** Live/Ended totals — reflects the search and filters, never the status. */
+export function useDashboardStatsQuery(params: StatsKeyParams) {
   return useQuery({
-    queryKey: queryKeys.dashboard.stats({ q }),
+    queryKey: queryKeys.dashboard.stats(params),
     queryFn: () =>
-      apiJson<CampaignStats>(
-        `/api/dashboard/stats${q ? `?q=${encodeURIComponent(q)}` : ""}`,
-      ),
+      apiJson<CampaignStats>(`/api/dashboard/stats${listQuery(params)}`),
     placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * The backend users behind the Backend filter. Reference data that changes
+ * about never, so it gets the same long staleTime as the entity comboboxes.
+ */
+export function useUserOptions() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.userOptions(),
+    queryFn: () => apiJson<PersonView[]>("/api/users/options"),
+    staleTime: 5 * 60_000,
   });
 }

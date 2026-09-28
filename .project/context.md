@@ -166,7 +166,20 @@ separate endpoint rather than `?all=1`, so no caller has to narrow
 `T[] | Page<T>` and there is no way to pull an unbounded list through the
 paginated path.
 
+**The dashboard (`/`) is the one unscoped read.** `/api/dashboard` and
+`/api/dashboard/stats` call the same `getCampaignsPage` / `getCampaignStats`
+with `userId: null`, so they span every user; read-only by construction, since
+no write route lives under that path. Its filter bar (client, sales, backend
+user, and a *running in* date range) is parsed by `parseCampaignFilters` in
+`api.ts` and applied by `campaignFilter` in `data.ts`. Rows expand into
+`CampaignLocationsTable`, shared with the campaigns screen so both show the
+same location columns. `/api/users/options` backs the backend-user picker —
+session-guarded, names only, unlike its REGISTER_SECRET-gated parent.
+
 Traps that already bit once, or nearly did:
+
+- **Status, date range and search can all key on `locations`.** `campaignFilter`
+  puts them in an `$and`; spreading them into one object drops all but the last.
 
 - **`Model.aggregate()` does not cast `userId`.** `find()`/`countDocuments()`
   do, which is why passing a string always worked — but pipelines go to the

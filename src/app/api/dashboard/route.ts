@@ -1,7 +1,12 @@
 import { NextRequest } from "next/server";
 import { CAMPAIGN_SORT_KEYS, getCampaignsPage } from "@/lib/data";
 import { CAMPAIGN_STATUS_FILTERS } from "@/lib/view-types";
-import { authGuard, ok, parseListParams } from "@/lib/api";
+import {
+  authGuard,
+  ok,
+  parseCampaignFilters,
+  parseListParams,
+} from "@/lib/api";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -36,6 +41,7 @@ export async function GET(req: NextRequest) {
   return ok(
     await getCampaignsPage(null, {
       ...params,
+      ...parseCampaignFilters(sp),
       status: statusSchema.parse(sp.get("status") ?? undefined),
     }),
   );
