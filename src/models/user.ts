@@ -7,7 +7,8 @@ export const userSchema = new Schema(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true }, // bcrypt hash
-    appPassword: { type: String, required: true }, // Gmail app password (nodemailer)
+    // Gmail app password (nodemailer). Optional — without one the user sends no mail.
+    appPassword: { type: String, default: "" },
   },
   { timestamps: true },
 );

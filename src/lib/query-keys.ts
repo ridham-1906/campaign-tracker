@@ -13,7 +13,19 @@ export type ListKeyParams = {
   dir?: "asc" | "desc";
   q?: string;
   status?: string;
+  /** The dashboard's filter bar. Ids; dates as `YYYY-MM-DD`. */
+  clientId?: string;
+  salesId?: string;
+  ownerId?: string;
+  from?: string;
+  to?: string;
 };
+
+/** What the dashboard's tiles are keyed by — everything except the status. */
+export type StatsKeyParams = Omit<
+  ListKeyParams,
+  "page" | "limit" | "sort" | "dir" | "status"
+>;
 
 /** The three reference resources that share the form/combobox machinery. */
 export const ENTITY_KINDS = ["clients", "vendors", "sales"] as const;
@@ -54,8 +66,10 @@ export const queryKeys = {
     lists: () => [...queryKeys.dashboard.all, "list"] as const,
     list: (params: ListKeyParams = {}) =>
       [...queryKeys.dashboard.lists(), params] as const,
-    stats: (params: Pick<ListKeyParams, "q"> = {}) =>
+    stats: (params: StatsKeyParams = {}) =>
       [...queryKeys.dashboard.all, "stats", params] as const,
+    /** The backend users behind the Backend filter. */
+    userOptions: () => [...queryKeys.dashboard.all, "user-options"] as const,
   },
   images: {
     all: ["images"] as const,

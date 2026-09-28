@@ -1,14 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import { formatDate, lifecycleState } from "@/lib/campaign";
 import {
   useDashboardQuery,
   useDashboardStatsQuery,
+  useUserOptions,
 } from "@/lib/queries/dashboard";
+import { useEntityOptions } from "@/lib/queries/entities";
+import { CampaignLocationsTable } from "@/components/campaign-locations-table";
+import { SimpleCombobox } from "@/components/simple-combobox";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DataTable,
   sortParams,
@@ -40,6 +47,24 @@ function stateCounts(c: Row) {
   return { live, pending, ended: c.locations.length - live - pending };
 }
 
+/** The filter bar's fields. `""` is "not filtering by this". */
+type Filters = {
+  clientId: string;
+  salesId: string;
+  ownerId: string;
+  /** `YYYY-MM-DD`, straight off the date inputs. */
+  from: string;
+  to: string;
+};
+
+const NO_FILTERS: Filters = {
+  clientId: "",
+  salesId: "",
+  ownerId: "",
+  from: "",
+  to: "",
+};
+
 /**
  * The shared dashboard: every user's campaigns, read-only, at a glance.
  *
@@ -50,18 +75,34 @@ function stateCounts(c: Row) {
  */
 export function Dashboard() {
   const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const table = useTableState();
+
+  const clients = useEntityOptions("clients").data ?? [];
+  const salesPeople = useEntityOptions("sales").data ?? [];
+  const backendUsers = useUserOptions().data ?? [];
+
+  // Everything the list and the tiles narrow by, apart from the status tiles.
+  const active = {
+    q: table.debouncedSearch || undefined,
+    clientId: filters.clientId || undefined,
+    salesId: filters.salesId || undefined,
+    ownerId: filters.ownerId || undefined,
+    from: filters.from || undefined,
+    to: filters.to || undefined,
+  };
+  const anyFilter = Object.values(filters).some(Boolean);
 
   const query = useDashboardQuery({
     page: table.pagination.pageIndex + 1,
     limit: table.pagination.pageSize,
-    q: table.debouncedSearch || undefined,
+    ...active,
     status: statusFilter === "all" ? undefined : statusFilter,
     ...sortParams(table.sorting),
   });
 
   // Totals across the whole result set — they can't be derived from one page.
-  const stats = useDashboardStatsQuery(table.debouncedSearch || undefined).data;
+  const stats = useDashboardStatsQuery(active).data;
 
   function setFilter(next: CampaignStatusFilter) {
     setStatusFilter(next);
@@ -69,6 +110,21 @@ export function Dashboard() {
     // meaningless.
     table.toFirstPage();
   }
+
+  function setField<K extends keyof Filters>(key: K, value: string) {
+    setFilters((f) => ({ ...f, [key]: value }));
+    table.toFirstPage();
+  }
+
+  function clearFilters() {
+    setFilters(NO_FILTERS);
+    table.toFirstPage();
+  }
+
+  const renderLocations = useCallback(
+    (c: Row) => <CampaignLocationsTable locations={c.locations} />,
+    [],
+  );
 
   const columns = useMemo<ColumnDef<Row>[]>(
     () => [
@@ -84,6 +140,19 @@ export function Dashboard() {
         id: "sales",
         accessorFn: (c) => c.sales.name,
         header: "Sales",
+      },
+      {
+        id: "locations",
+        header: "Locations",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const n = row.original.locations.length;
+          return (
+            <span>
+              {n} location{n === 1 ? "" : "s"}
+            </span>
+          );
+        },
       },
       {
         // Sort ids match CAMPAIGN_SORT_KEYS in lib/data.ts — the server orders
@@ -149,6 +218,58 @@ export function Dashboard() {
         </p>
       </div>
 
+      <div className="shrink-0 space-y-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Field label="Client">
+            <SimpleCombobox
+              label="Client"
+              value={filters.clientId}
+              onChange={(id) => setField("clientId", id)}
+              options={clients}
+            />
+          </Field>
+          <Field label="Sales">
+            <SimpleCombobox
+              label="Sales"
+              value={filters.salesId}
+              onChange={(id) => setField("salesId", id)}
+              options={salesPeople}
+            />
+          </Field>
+          <Field label="Backend">
+            <SimpleCombobox
+              label="Backend"
+              value={filters.ownerId}
+              onChange={(id) => setField("ownerId", id)}
+              options={backendUsers}
+            />
+          </Field>
+          {/* Running in the range: a campaign matches if any location overlaps
+              it, so a campaign already live on From still shows. */}
+          <Field label="Running from">
+            <Input
+              type="date"
+              value={filters.from}
+              max={filters.to || undefined}
+              onChange={(e) => setField("from", e.target.value)}
+            />
+          </Field>
+          <Field label="Running to">
+            <Input
+              type="date"
+              value={filters.to}
+              min={filters.from || undefined}
+              onChange={(e) => setField("to", e.target.value)}
+            />
+          </Field>
+        </div>
+        {anyFilter && (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+
       {/* Both tiles toggle: clicking the active one clears back to every
           campaign, which is the only way back without a Total tile. */}
       <div className="grid shrink-0 grid-cols-2 gap-3">
@@ -181,9 +302,10 @@ export function Dashboard() {
             searchPlaceholder="Search client, sales, location…"
             isLoading={query.isLoading}
             isFetching={query.isFetching}
+            renderExpanded={renderLocations}
             empty={
               <p className="p-8 text-center text-sm text-muted-foreground">
-                {table.debouncedSearch || statusFilter !== "all"
+                {table.debouncedSearch || anyFilter || statusFilter !== "all"
                   ? "No campaigns match."
                   : "No campaigns yet."}
               </p>
@@ -191,6 +313,21 @@ export function Dashboard() {
           />
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      {children}
     </div>
   );
 }

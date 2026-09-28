@@ -303,6 +303,13 @@ export async function getClientList(): Promise<PersonView[]> {
   return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
 }
 
+/** The backend users, for the dashboard's owner filter. Names only. */
+export async function getUserList(): Promise<PersonView[]> {
+  await connectDB();
+  const rows = await User.find().sort({ name: 1 }).lean();
+  return rows.map((r) => ({ id: r._id.toString(), name: r.name }));
+}
+
 /** Lightweight campaign picker for the add-images wizard. */
 export async function getCampaignOptions(
   userId: string,
@@ -383,16 +390,56 @@ async function buildSearch(q: string) {
   };
 }
 
+/**
+ * The dashboard's filter bar, as query fragments. Every field is optional and
+ * an unset one contributes nothing.
+ */
+export type CampaignFilters = {
+  clientId?: string;
+  salesId?: string;
+  /** The owning backend user. */
+  ownerId?: string;
+  from?: Date;
+  to?: Date;
+};
+
+/**
+ * Campaigns *running* in the window: a location that started on or before `to`
+ * and ends on or after `from`. Either side may be open.
+ */
+function dateRangeFilter(from?: Date, to?: Date) {
+  if (!from && !to) return {};
+  return {
+    locations: {
+      $elemMatch: {
+        ...(to ? { startDate: { $lte: to } } : {}),
+        ...(from ? { endDate: { $gte: from } } : {}),
+      },
+    },
+  };
+}
+
 /** `userId: null` means "every user" — the admin all-users view. */
 async function campaignFilter(
   userId: string | null,
-  opts: { q?: string; status?: CampaignStatusFilter },
+  opts: { q?: string; status?: CampaignStatusFilter } & CampaignFilters,
   now?: Date,
 ) {
+  // Status, date range and search can all key on `locations`, so they go into
+  // an $and rather than being spread — spreading would drop all but the last.
+  const clauses = [
+    statusFilters(now)[opts.status ?? "all"] as Record<string, unknown>,
+    dateRangeFilter(opts.from, opts.to),
+    opts.q ? await buildSearch(opts.q) : {},
+  ].filter((c) => Object.keys(c).length > 0);
+
   return {
+    ...(opts.ownerId ? { userId: oid(opts.ownerId) } : {}),
+    ...(opts.clientId ? { clientId: oid(opts.clientId) } : {}),
+    ...(opts.salesId ? { salesId: oid(opts.salesId) } : {}),
+    // Last, so the caller's scope always wins over an ownerId from the query.
     ...(userId ? { userId: oid(userId) } : {}),
-    ...statusFilters(now)[opts.status ?? "all"],
-    ...(opts.q ? await buildSearch(opts.q) : {}),
+    ...(clauses.length > 0 ? { $and: clauses } : {}),
   };
 }
 
@@ -407,16 +454,14 @@ const FAR_FUTURE = new Date(8.64e15);
  */
 export async function getCampaignsPage(
   userId: string | null,
-  params: ListParams<CampaignSortKey> & { status?: CampaignStatusFilter },
+  params: ListParams<CampaignSortKey> & {
+    status?: CampaignStatusFilter;
+  } & CampaignFilters,
   now?: Date,
 ): Promise<Page<CampaignListView>> {
   await connectDB();
 
-  const filter = await campaignFilter(
-    userId,
-    { q: params.q, status: params.status },
-    now,
-  );
+  const filter = await campaignFilter(userId, params, now);
   const sortField = CAMPAIGN_SORT_FIELDS[params.sort];
 
   const lookups: PipelineStage[] = [
@@ -517,17 +562,17 @@ export async function getCampaignsPage(
 
 /**
  * The stat tiles can't be derived from a page, so they get their own pass.
- * Takes the same `q` as the list (tiles reflect the search) but not the status
- * filter — the tiles *are* the status filter.
+ * Takes the same `q` and filters as the list (the tiles reflect them) but not
+ * the status filter — the tiles *are* the status filter.
  */
 export async function getCampaignStats(
   userId: string | null,
-  opts: { q?: string } = {},
+  opts: { q?: string } & CampaignFilters = {},
   now?: Date,
 ): Promise<CampaignStats> {
   await connectDB();
 
-  const base = await campaignFilter(userId, { q: opts.q }, now);
+  const base = await campaignFilter(userId, opts, now);
   const f = statusFilters(now);
   const branch = (match: Record<string, unknown>) =>
     Object.keys(match).length === 0

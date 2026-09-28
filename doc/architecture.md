@@ -63,7 +63,7 @@ render.
 
 | Model | Key fields |
 | --- | --- |
-| `User` | name, email (unique), password (bcrypt hash), appPassword (Gmail, **AES-256-GCM encrypted**) |
+| `User` | name, email (unique), password (bcrypt hash), appPassword (Gmail, **AES-256-GCM encrypted**, optional — no password means no outbound mail) |
 | `Sales` | name, email, userId *(creator only — shared directory)* |
 | `Vendor` | name, userId *(creator only — shared directory)* |
 | `Client` | name, userId *(creator only — shared directory)* |

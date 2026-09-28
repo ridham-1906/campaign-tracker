@@ -1,7 +1,9 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
+import { Types } from "mongoose";
 import { z } from "zod";
 import { getSession, type SessionPayload } from "@/lib/auth";
+import type { CampaignFilters } from "@/lib/data";
 import type { Page } from "@/lib/view-types";
 
 // ---- JSON response helpers ----
@@ -157,6 +159,38 @@ export function parseListParams<S extends string>(
     q: parsed.q,
     sort,
     dir: parsed.dir === "desc" ? -1 : 1,
+  };
+}
+
+/**
+ * The dashboard's filter bar, parsed off the query string. Same forgiving
+ * contract as parseListParams: an id that isn't an ObjectId or a date that
+ * isn't `YYYY-MM-DD` is dropped rather than 400-ing a stale bookmark.
+ *
+ * Dates become **UTC midnight**, which is how start/end dates are stored — see
+ * startOfDay in lib/services.ts.
+ */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function readId(raw: RawParams, key: string) {
+  const v = readParam(raw, key);
+  return v && Types.ObjectId.isValid(v) ? v : undefined;
+}
+
+function readDate(raw: RawParams, key: string) {
+  const v = readParam(raw, key);
+  if (!v || !DATE_ONLY.test(v)) return undefined;
+  const d = new Date(`${v}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+export function parseCampaignFilters(raw: RawParams): CampaignFilters {
+  return {
+    clientId: readId(raw, "clientId"),
+    salesId: readId(raw, "salesId"),
+    ownerId: readId(raw, "ownerId"),
+    from: readDate(raw, "from"),
+    to: readDate(raw, "to"),
   };
 }
 

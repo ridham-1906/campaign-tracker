@@ -35,6 +35,11 @@ function listQuery(params: ListKeyParams) {
   if (params.sort) sp.set("sort", params.sort);
   if (params.dir) sp.set("dir", params.dir);
   if (params.status) sp.set("status", params.status);
+  if (params.clientId) sp.set("clientId", params.clientId);
+  if (params.salesId) sp.set("salesId", params.salesId);
+  if (params.ownerId) sp.set("ownerId", params.ownerId);
+  if (params.from) sp.set("from", params.from);
+  if (params.to) sp.set("to", params.to);
   const qs = sp.toString();
   return qs ? `?${qs}` : "";
 }

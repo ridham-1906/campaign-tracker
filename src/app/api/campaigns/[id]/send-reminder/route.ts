@@ -62,6 +62,9 @@ export async function POST(req: Request, { params }: Params) {
 
   const user = await User.findById(auth.session.userId);
   if (!user) return notFound("User not found");
+  if (!user.appPassword?.trim()) {
+    return badRequest("No Gmail app password configured for this account");
+  }
 
   const sales = campaign.salesId as unknown as { name: string; email: string };
   const client = campaign.clientId as unknown as { name: string };

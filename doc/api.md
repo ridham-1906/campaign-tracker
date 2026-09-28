@@ -27,7 +27,7 @@ how you provision the 2-3 people who use the tool, e.g. from Postman.
 | `name` | string | required, non-empty |
 | `email` | string | required, valid email, must be unique |
 | `password` | string | required, **min 6 characters** — used to log in |
-| `appPassword` | string | required — the sender Gmail **app password** for this user's reminder emails |
+| `appPassword` | string | optional — the sender Gmail **app password** for this user's reminder emails. Omit it (or send `""`) for a user who never sends mail: their campaigns are skipped by both cron jobs, and the manual send/share buttons return `400 No Gmail app password configured for this account` |
 
 ### Responses
 

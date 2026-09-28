@@ -21,7 +21,7 @@ Everything except `User` is scoped by `userId`, so each backend person only sees
 their own records.
 
 ```
-User (login)  name, email, password (bcrypt), appPassword (AES-256-GCM)
+User (login)  name, email, password (bcrypt), appPassword (AES-256-GCM, optional)
  ├─ Sales     name, email          ← reminder recipients
  ├─ Vendor    name
  ├─ Client    name
@@ -117,6 +117,11 @@ with `CRON_SECRET` via `cronGuard` in `src/lib/api.ts`:
 Dedupe is by `reminderSentAt` / `creativeReminderSentAt` being older than today,
 so re-running the job never double-sends and a missed day is caught up.
 
+`User.appPassword` is **optional**. A user without one sends nothing: their
+campaigns are counted as `skipped` before any transport is opened, so a mailless
+account produces no auth errors. The manual send-reminder and share-images
+routes 400 for the same reason. Clear it in MongoDB to mute a user.
+
 Data flow per run: one aggregation filters and projects server-side and joins
 sales/client/owner → jobs grouped by owning user → sent over that user's pooled
 Gmail transport → recorded per campaign with a targeted `bulkWrite`. Failures
@@ -161,7 +166,20 @@ separate endpoint rather than `?all=1`, so no caller has to narrow
 `T[] | Page<T>` and there is no way to pull an unbounded list through the
 paginated path.
 
+**The dashboard (`/`) is the one unscoped read.** `/api/dashboard` and
+`/api/dashboard/stats` call the same `getCampaignsPage` / `getCampaignStats`
+with `userId: null`, so they span every user; read-only by construction, since
+no write route lives under that path. Its filter bar (client, sales, backend
+user, and a *running in* date range) is parsed by `parseCampaignFilters` in
+`api.ts` and applied by `campaignFilter` in `data.ts`. Rows expand into
+`CampaignLocationsTable`, shared with the campaigns screen so both show the
+same location columns. `/api/users/options` backs the backend-user picker —
+session-guarded, names only, unlike its REGISTER_SECRET-gated parent.
+
 Traps that already bit once, or nearly did:
+
+- **Status, date range and search can all key on `locations`.** `campaignFilter`
+  puts them in an `$and`; spreading them into one object drops all but the last.
 
 - **`Model.aggregate()` does not cast `userId`.** `find()`/`countDocuments()`
   do, which is why passing a string always worked — but pipelines go to the

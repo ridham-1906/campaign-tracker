@@ -142,10 +142,22 @@ export async function runReminders(
   };
 
   const byUser = new Map<string, Job[]>();
+  // Owners with no app password, counted once each rather than per campaign.
+  const noAppPassword = new Map<string, number>();
 
   for (const job of jobs) {
     if (!job.sales || !job.owner || !job.client) {
       result.skipped++;
+      continue;
+    }
+
+    // No mailbox to send from — skip before a transport is ever opened.
+    if (!job.owner.appPassword?.trim()) {
+      result.skipped++;
+      noAppPassword.set(
+        job.owner.email,
+        (noAppPassword.get(job.owner.email) ?? 0) + 1,
+      );
       continue;
     }
 
@@ -156,6 +168,12 @@ export async function runReminders(
     else byUser.set(userId, [job]);
   }
 
+  for (const [email, count] of noAppPassword) {
+    console.warn(
+      `[${kind.name}] ${email} has no app password — skipped ${count} campaign(s)`,
+    );
+  }
+
   async function runUser(userJobs: Job[]) {
     // Every job in the group shares an owner, so one transport serves them all.
     const owner = userJobs[0].owner!;
@@ -163,7 +181,7 @@ export async function runReminders(
     let transport: Transporter;
 
     try {
-      transport = createTransport(owner.email, decryptSecret(owner.appPassword));
+      transport = createTransport(owner.email, decryptSecret(owner.appPassword!));
     } catch (err) {
       // A bad/undecryptable app password fails the whole group, not the run.
       // There is no mailbox to report from either, so this only reaches the log.

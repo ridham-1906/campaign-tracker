@@ -128,6 +128,11 @@ password):
 3. Use the 16-character value as the user's `appPassword` when creating them via
    [`POST /api/users`](./api.md#post-apiusers).
 
+`appPassword` is optional. A user without one (missing or empty) sends no mail
+at all: every run counts their campaigns as `skipped`, logs one warning naming
+the account, and never opens a transport — nothing lands in `errors`. Clear a
+user's app password directly in MongoDB to turn their reminders off.
+
 The app password is **encrypted at rest** (AES-256-GCM using `ENCRYPTION_KEY`)
 and decrypted only in-memory at send time — it is never stored or logged in
 plaintext.
