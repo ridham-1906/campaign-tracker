@@ -125,6 +125,16 @@ export type ImageTypeOption = { id: string; name: string; role: AttachmentStage 
 export type NamedCountView = { id: string; name: string; count: number };
 export type SalesCountView = NamedCountView & { email: string };
 
+/** One (campaign, location) pair, flattened for the folder-upload wizard to
+ * match a dropped folder's name against — see lib/folder-match.ts. */
+export type LocationIndexEntry = {
+  campaignId: string;
+  clientName: string;
+  locationId: string;
+  location: string;
+  city: string;
+};
+
 // ---- Images ----
 
 /**

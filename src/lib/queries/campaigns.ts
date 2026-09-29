@@ -19,6 +19,7 @@ import type {
   CampaignListView,
   CampaignStats,
   CampaignView,
+  LocationIndexEntry,
   Page,
 } from "@/lib/view-types";
 
@@ -89,6 +90,18 @@ export function useCampaignOptionsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.campaigns.options(),
     queryFn: () => apiJson<CampaignOption[]>("/api/campaigns/options"),
+    staleTime: 60_000,
+    enabled,
+  });
+}
+
+/** Every (campaign, location) the user owns, for the folder-upload wizard's
+ * name matcher — see lib/folder-match.ts. */
+export function useCampaignLocationsIndexQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.campaigns.locationsIndex(),
+    queryFn: () =>
+      apiJson<LocationIndexEntry[]>("/api/campaigns/locations-index"),
     staleTime: 60_000,
     enabled,
   });

@@ -18,6 +18,7 @@ import type {
   CampaignStatusFilter,
   CampaignView,
   ImageTypeOption,
+  LocationIndexEntry,
   LocationView,
   NamedCountView,
   Page,
@@ -333,6 +334,49 @@ export async function getCampaignOptions(
     clientName: r.client?.name ?? "—",
     locationCount: r.locationCount,
   }));
+}
+
+/** Every (campaign, location) the user owns, flattened — for the folder-
+ * upload wizard to match a dropped folder's name against. */
+export async function getCampaignLocationsIndex(
+  userId: string,
+): Promise<LocationIndexEntry[]> {
+  await connectDB();
+  const rows = await Campaign.aggregate<{
+    _id: Types.ObjectId;
+    client?: { name?: string };
+    locations: { _id: Types.ObjectId; location: string; city: string }[];
+  }>([
+    { $match: { userId: oid(userId) } },
+    {
+      $project: {
+        clientId: 1,
+        "locations._id": 1,
+        "locations.location": 1,
+        "locations.city": 1,
+      },
+    },
+    {
+      $lookup: {
+        from: Client.collection.name,
+        localField: "clientId",
+        foreignField: "_id",
+        as: "client",
+        pipeline: [{ $project: { name: 1 } }],
+      },
+    },
+    { $unwind: { path: "$client", preserveNullAndEmptyArrays: true } },
+  ]).exec();
+
+  return rows.flatMap((r) =>
+    r.locations.map((l) => ({
+      campaignId: String(r._id),
+      clientName: r.client?.name ?? "—",
+      locationId: String(l._id),
+      location: l.location,
+      city: l.city,
+    })),
+  );
 }
 
 // ---------------------------------------------------------------- campaigns

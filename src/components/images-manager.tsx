@@ -19,6 +19,7 @@ import { useCampaignQuery } from "@/lib/queries/campaigns";
 import { useImagesQuery } from "@/lib/queries/attachments";
 import { useSendPreviewLink } from "@/lib/queries/share";
 import { AddImagesWizard } from "@/components/add-images-wizard";
+import { FolderUploadWizard } from "@/components/folder-upload-wizard";
 import { useExportPpt } from "@/components/image-preview/export-ppt";
 import { ImagePreviewDialog } from "@/components/image-preview/dialog";
 import { ExportPptFilterItems } from "@/components/image-preview/photo-type-menu";
@@ -244,10 +245,13 @@ export function ImagesManager({ isAdmin = false }: { isAdmin?: boolean }) {
             Every photo uploaded across your campaigns.
           </p>
         </div>
-        <Button onClick={() => openWizard()}>
-          <PlusIcon />
-          Add images
-        </Button>
+        <div className="flex items-center gap-2">
+          <FolderUploadWizard />
+          <Button onClick={() => openWizard()}>
+            <PlusIcon />
+            Add images
+          </Button>
+        </div>
       </div>
 
       <Card className="min-h-0 flex-1">

@@ -43,6 +43,8 @@ export const queryKeys = {
       [...queryKeys.campaigns.all, "stats", params] as const,
     detail: (id: string) => [...queryKeys.campaigns.all, "detail", id] as const,
     options: () => [...queryKeys.campaigns.all, "options"] as const,
+    locationsIndex: () =>
+      [...queryKeys.campaigns.all, "locations-index"] as const,
   },
   /**
    * The shared dashboard reads every user's campaigns, so it can't share the
