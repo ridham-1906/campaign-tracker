@@ -16,6 +16,7 @@ import type {
   Page,
   PersonView,
   SalesCountView,
+  VendorFields,
 } from "@/lib/view-types";
 
 /** Clients and vendors share a name-only shape; sales adds an email. */
@@ -71,7 +72,10 @@ export function useNamedListQuery(
   return useQuery({
     queryKey: entityKeys.list(resource, params),
     queryFn: () =>
-      apiJson<Page<NamedCountView>>(`/api/${resource}${listQuery(params)}`),
+      // Vendor rows also carry their reminder emails and dates.
+      apiJson<Page<NamedCountView & Partial<VendorFields>>>(
+        `/api/${resource}${listQuery(params)}`,
+      ),
     // Keeps the current page on screen while the next one loads, instead of
     // flashing an empty table between pages.
     placeholderData: keepPreviousData,
@@ -98,10 +102,19 @@ export function useSaveNamed(resource: NamedResource) {
   const singular = SINGULAR[resource];
 
   return useMutation({
-    mutationFn: ({ id, name }: { id?: string; name: string }) =>
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id?: string;
+      name: string;
+      /** Vendors only; left out, the server keeps what's stored. */
+      emails?: string[];
+      reminderDates?: string[];
+    }) =>
       apiJson<OptionView>(
         id ? `/api/${resource}/${id}` : `/api/${resource}`,
-        { method: id ? "PATCH" : "POST", body: JSON.stringify({ name }) },
+        { method: id ? "PATCH" : "POST", body: JSON.stringify(body) },
       ),
     onSuccess: (saved, { id }) => {
       toast.success(`${singular} ${id ? "updated" : "added"}`);

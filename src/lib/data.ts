@@ -6,6 +6,7 @@ import {
   DEFAULT_REMINDER_LEAD_DAYS,
   addDays,
   businessToday,
+  toDateInputValue,
 } from "@/lib/campaign";
 import { ATTACHMENT_STAGES, type AttachmentStage } from "@/lib/attachments";
 import { type ListParams, searchRegex } from "@/lib/api";
@@ -23,6 +24,7 @@ import type {
   Page,
   PersonView,
   SalesCountView,
+  VendorCountView,
 } from "@/lib/view-types";
 
 // The view shapes live in a client-safe module so components can import them
@@ -806,7 +808,7 @@ export async function getSalesPage(
 
 export async function getVendorsPage(
   p: ListParams<EntitySortKey>,
-): Promise<Page<NamedCountView>> {
+): Promise<Page<VendorCountView>> {
   await connectDB();
   const filter = entityFilter(p.q);
 
@@ -839,6 +841,8 @@ export async function getVendorsPage(
     rows: rows.map((r) => ({
       id: String(r._id),
       name: r.name,
+      emails: r.emails ?? [],
+      reminderDates: (r.reminderDates ?? []).map((d) => toDateInputValue(d)),
       count: counts.get(String(r._id)) ?? 0,
     })),
     total,

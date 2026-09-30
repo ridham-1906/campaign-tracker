@@ -11,6 +11,7 @@ import "server-only";
 export * from "@/models/user";
 export * from "@/models/sales";
 export * from "@/models/vendor";
+export * from "@/models/vendor-reminder";
 export * from "@/models/client";
 export * from "@/models/attachment";
 export * from "@/models/image-type";

@@ -183,7 +183,13 @@ export function useSendReminder() {
       /** Carried through to onSuccess for the toast; not sent to the server. */
       recipient?: string;
     }) =>
-      apiJson<{ ok: true; sentTo: string; locations: number }>(
+      apiJson<{
+        ok: true;
+        sentTo: string;
+        locations: number;
+        vendorsSentTo?: string[];
+        vendorErrors?: string[];
+      }>(
         `/api/campaigns/${campaignId}/send-reminder`,
         {
           method: "POST",
@@ -192,11 +198,15 @@ export function useSendReminder() {
       ),
     onSuccess: (data, { recipient }) => {
       const n = data?.locations ?? 1;
+      const vendors = data?.vendorsSentTo?.length ?? 0;
       toast.success(
         `Reminder for ${n} location${n === 1 ? "" : "s"} sent to ${
           recipient ?? data.sentTo
-        }`,
+        }${vendors > 0 ? ` and ${vendors} vendor address${vendors === 1 ? "" : "es"}` : ""}`,
       );
+      if (data?.vendorErrors?.length) {
+        toast.error(`Vendor email failed — ${data.vendorErrors.join("; ")}`);
+      }
       // The route rewrites reminderDate/reminderSent/reminderSentAt on the
       // locations it covered, which drives both the "Next reminder" badge and
       // the "Reminders sent today" tile.

@@ -26,9 +26,10 @@ import {
 } from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import type { NamedCountView } from "@/lib/view-types";
+import { formatDate, toDateInputValue, businessToday } from "@/lib/campaign";
+import type { NamedCountView, VendorFields } from "@/lib/view-types";
 
-type Item = NamedCountView;
+type Item = NamedCountView & Partial<VendorFields>;
 
 export function NamedResourceManager({
   resource,
@@ -87,6 +88,7 @@ export function NamedResourceManager({
           <span className="font-medium">{row.original.name}</span>
         ),
       },
+      ...(resource === "vendors" ? vendorColumns() : []),
       {
         accessorKey: "count",
         header: "Campaigns",
@@ -128,7 +130,7 @@ export function NamedResourceManager({
         ),
       },
     ],
-    [openEdit, remove],
+    [resource, openEdit, remove],
   );
 
   return (
@@ -185,4 +187,40 @@ export function NamedResourceManager({
       {confirmDialog}
     </div>
   );
+}
+
+/** Reminder emails and the next upcoming reminder date, vendors only. */
+function vendorColumns(): ColumnDef<Item>[] {
+  return [
+    {
+      id: "emails",
+      header: "Reminder emails",
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.emails?.length ? (
+          <span className="text-sm">{row.original.emails.join(", ")}</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      id: "nextReminder",
+      header: "Next reminder",
+      enableSorting: false,
+      cell: ({ row }) => {
+        const today = toDateInputValue(businessToday());
+        const upcoming = (row.original.reminderDates ?? []).filter((d) => d >= today);
+        if (upcoming.length === 0)
+          return <span className="text-muted-foreground">—</span>;
+        return (
+          <span className="text-sm">
+            {formatDate(upcoming[0])}
+            {upcoming.length > 1 && (
+              <span className="text-muted-foreground"> +{upcoming.length - 1} more</span>
+            )}
+          </span>
+        );
+      },
+    },
+  ];
 }

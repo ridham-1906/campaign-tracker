@@ -30,6 +30,51 @@ is chased **every day** until the status changes, tracked by
 `creativeReminderSentAt`. This is a separate email from the expiry reminder; a
 campaign can receive both on the same day.
 
+## Vendor reminders
+
+Vendors are emailed on **calendar dates picked per vendor** (Vendors screen →
+Edit → *Reminder dates*), to any number of optional *Reminder emails*. A vendor
+with no email or no dates is never emailed.
+
+On each chosen date the vendor gets **one email per campaign** it has live sites
+on, sent from the campaign owner's Gmail. It lists only that vendor's own sites —
+never another vendor's — with end date and days left. **Only LIVE sites** are
+included: ended and pending-creative sites are left out, and a vendor with no
+live sites on a campaign gets no email for it.
+
+- Dedupe is a `VendorReminder` row per (vendor, campaign, day), claimed *before*
+  sending so overlapping runs can't double-send. A failed send releases the
+  claim, so the next hourly run retries.
+- A date that passes without a successful send is **not** caught up later.
+- Vendor reminders run inside `/api/cron/reminders` after the expiry pass,
+  within what's left of the same time budget; the response carries a `vendor`
+  object with its own counters.
+- Implementation: [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts),
+  template [`src/lib/mail/vendor-reminder.ts`](../src/lib/mail/vendor-reminder.ts).
+
+## Vendor mid-monitoring reminders
+
+Separate from the vendor reminders above, and not tied to a vendor's chosen
+dates: once a location's **mid date** arrives, its vendor (if it has an email)
+is asked for the mid-campaign monitoring photo — one email per campaign,
+listing just the sites of that vendor's that reached their mid date.
+
+- Only **LIVE** locations are considered — ended sites, and ones whose end date
+  has passed, are dropped, same as the vendor reminders above.
+- It **repeats every day** the mid date has passed, tracked by
+  `midReminderSentAt`, until a "Mid date" photo is uploaded against that
+  location's current term (checked via the `Attachment` collection) — then it
+  stops for good, even if the mid date already came and went.
+- Renewing a campaign starts a fresh term, so a location keeps a past term's
+  mid photo on file but is asked again once its new mid date arrives.
+- Runs alongside the vendor reminders above, inside `/api/cron/reminders`; the
+  response carries a `vendorMid` object with its own counters.
+- Implementation: `findMidMonitoringJobs` / `runVendorMidReminders` in
+  [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts), template
+  [`src/lib/mail/vendor-mid-reminder.ts`](../src/lib/mail/vendor-mid-reminder.ts).
+- Not sent by the manual "Send reminder" button — that only sends the
+  sites-are-due vendor email, not the mid-monitoring ask.
+
 ## The job
 
 Two endpoints share one implementation, so they can sit on different schedules:
@@ -89,6 +134,11 @@ schedule is recomputed from scratch.
 immediately and advances the schedule past today, so the automated series
 doesn't fire again for those locations the same day.
 
+It then emails each vendor (with an address) on those locations about its own
+live sites (pending-creative and ended ones are skipped), and records the send so the automated vendor reminder skips that
+vendor/campaign today. A vendor failure is reported back as a warning toast; it
+doesn't undo the sales email.
+
 ## Email templates
 
 Templates live in [`src/lib/mail/`](../src/lib/mail), one file per type, sharing
@@ -98,6 +148,7 @@ Templates live in [`src/lib/mail/`](../src/lib/mail), one file per type, sharing
 | --- | --- |
 | `expiry-reminder.ts` | Campaign expiring soon |
 | `creative-reminder.ts` | Creative still pending |
+| `vendor-reminder.ts` | Vendor site status on a chosen date |
 | `error-update.ts` | Failure digest for the maintainer |
 
 `src/lib/mailer.ts` only builds transports and delivers a rendered message.

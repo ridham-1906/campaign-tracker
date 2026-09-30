@@ -10,13 +10,14 @@ import {
   ok,
   parseListParams,
   readJson,
-  serializeNamed,
+  serializeVendor,
+  vendorFieldsSchema,
 } from "@/lib/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const createSchema = z.object({ name: z.string().min(1) });
+const createSchema = z.object({ name: z.string().min(1) }).extend(vendorFieldsSchema.shape);
 
 /**
  * Paginated, with campaign-usage counts for the rows on this page.
@@ -48,5 +49,5 @@ export async function POST(req: Request) {
     ...parsed.data,
     userId: auth.session.userId,
   });
-  return created(serializeNamed(doc));
+  return created(serializeVendor(doc));
 }

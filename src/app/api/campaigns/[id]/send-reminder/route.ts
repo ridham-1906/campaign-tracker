@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Types } from "mongoose";
 import { connectDB } from "@/lib/db";
 import { Campaign, User } from "@/models";
 import { sendMail } from "@/lib/mailer";
@@ -12,6 +13,7 @@ import {
 } from "@/lib/campaign";
 import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
 import { isValidId } from "@/lib/services";
+import { sendVendorRemindersNow } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,12 +24,14 @@ const bodySchema = z.object({ locationId: z.string().min(1).optional() });
 
 type LocationLike = {
   _id: unknown;
+  vendorId: Types.ObjectId;
   city: string;
   location: string;
   medium?: string;
   /** Pre-rename documents keep the media format here. */
   type?: string;
   status: string;
+  startDate: Date;
   endDate: Date;
   reminderDate: Date;
   reminderSent: boolean;
@@ -38,6 +42,10 @@ type LocationLike = {
  * Immediately email the campaign's sales person. With `locationId`, nudges about
  * that one placement; without it, sends a single digest covering every location
  * that hasn't ended yet.
+ *
+ * Each vendor with an email on those locations is then sent its own vendor
+ * reminder about just its sites. A vendor failure doesn't fail the request —
+ * the sales email has already gone — it comes back in `vendorErrors`.
  */
 export async function POST(req: Request, { params }: Params) {
   const auth = await authGuard();
@@ -84,11 +92,13 @@ export async function POST(req: Request, { params }: Params) {
     );
   }
 
+  const appPassword = decryptSecret(user.appPassword);
+
   try {
     await sendMail({
       fromName: user.name,
       fromEmail: user.email,
-      appPassword: decryptSecret(user.appPassword),
+      appPassword,
       to: sales.email,
       message: buildExpiryReminder({
         fromName: user.name,
@@ -119,5 +129,26 @@ export async function POST(req: Request, { params }: Params) {
   }
   await campaign.save();
 
-  return ok({ ok: true, sentTo: sales.email, locations: targets.length });
+  const vendors = await sendVendorRemindersNow({
+    owner: { _id: user._id, name: user.name, email: user.email, appPassword },
+    campaignId: campaign._id,
+    clientName: client.name,
+    locations: targets.map((l) => ({
+      vendorId: l.vendorId,
+      city: l.city,
+      location: l.location,
+      medium: l.medium ?? l.type ?? "",
+      status: l.status,
+      startDate: l.startDate,
+      endDate: l.endDate,
+    })),
+  });
+
+  return ok({
+    ok: true,
+    sentTo: sales.email,
+    locations: targets.length,
+    vendorsSentTo: vendors.sentTo,
+    vendorErrors: vendors.errors,
+  });
 }
