@@ -183,13 +183,7 @@ export function useSendReminder() {
       /** Carried through to onSuccess for the toast; not sent to the server. */
       recipient?: string;
     }) =>
-      apiJson<{
-        ok: true;
-        sentTo: string;
-        locations: number;
-        vendorsSentTo?: string[];
-        vendorErrors?: string[];
-      }>(
+      apiJson<{ ok: true; sentTo: string; locations: number }>(
         `/api/campaigns/${campaignId}/send-reminder`,
         {
           method: "POST",
@@ -198,15 +192,11 @@ export function useSendReminder() {
       ),
     onSuccess: (data, { recipient }) => {
       const n = data?.locations ?? 1;
-      const vendors = data?.vendorsSentTo?.length ?? 0;
       toast.success(
         `Reminder for ${n} location${n === 1 ? "" : "s"} sent to ${
           recipient ?? data.sentTo
-        }${vendors > 0 ? ` and ${vendors} vendor address${vendors === 1 ? "" : "es"}` : ""}`,
+        }`,
       );
-      if (data?.vendorErrors?.length) {
-        toast.error(`Vendor email failed — ${data.vendorErrors.join("; ")}`);
-      }
       // The route rewrites reminderDate/reminderSent/reminderSentAt on the
       // locations it covered, which drives both the "Next reminder" badge and
       // the "Reminders sent today" tile.
@@ -217,6 +207,52 @@ export function useSendReminder() {
         error instanceof ApiError
           ? apiError(error.data, "Failed to send")
           : "Failed to send",
+      ),
+  });
+}
+
+/** The three stages a vendor can be asked for a photo of. */
+export type VendorStage = "installation" | "mid_date" | "end_date";
+
+/** yyyy-mm-dd lists — on each date the vendor gets that stage's photo request. */
+export type VendorSchedule = Record<VendorStage, string[]>;
+
+const vendorScheduleKey = (campaignId: string) =>
+  ["campaigns", "vendor-schedule", campaignId] as const;
+
+/** A campaign's vendor photo-request dates, for the "Remind vendor…" dialog. */
+export function useVendorSchedule(campaignId: string | null) {
+  return useQuery({
+    queryKey: vendorScheduleKey(campaignId ?? ""),
+    queryFn: () =>
+      apiJson<VendorSchedule>(`/api/campaigns/${campaignId}/remind-vendor`),
+    enabled: Boolean(campaignId),
+  });
+}
+
+export function useSaveVendorSchedule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ campaignId, schedule }: { campaignId: string; schedule: VendorSchedule }) =>
+      apiJson<VendorSchedule>(`/api/campaigns/${campaignId}/remind-vendor`, {
+        method: "PUT",
+        body: JSON.stringify(schedule),
+      }),
+    onSuccess: (saved, { campaignId }) => {
+      const n = saved.installation.length + saved.mid_date.length + saved.end_date.length;
+      toast.success(
+        n === 0
+          ? "Vendor reminders cleared"
+          : `Vendor reminders saved — ${n} date${n === 1 ? "" : "s"} scheduled`,
+      );
+      queryClient.setQueryData(vendorScheduleKey(campaignId), saved);
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof ApiError
+          ? apiError(error.data, "Failed to save")
+          : "Failed to save",
       ),
   });
 }

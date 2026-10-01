@@ -110,7 +110,6 @@ export function useSaveNamed(resource: NamedResource) {
       name: string;
       /** Vendors only; left out, the server keeps what's stored. */
       emails?: string[];
-      reminderDates?: string[];
     }) =>
       apiJson<OptionView>(
         id ? `/api/${resource}/${id}` : `/api/${resource}`,

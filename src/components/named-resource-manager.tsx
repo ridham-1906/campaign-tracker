@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { formatDate, toDateInputValue, businessToday } from "@/lib/campaign";
 import type { NamedCountView, VendorFields } from "@/lib/view-types";
 
 type Item = NamedCountView & Partial<VendorFields>;
@@ -189,7 +188,8 @@ export function NamedResourceManager({
   );
 }
 
-/** Reminder emails and the next upcoming reminder date, vendors only. */
+/** Reminder emails, vendors only — see "Remind vendor" on the campaign
+ * screen for actually sending anything; nothing is scheduled from here. */
 function vendorColumns(): ColumnDef<Item>[] {
   return [
     {
@@ -202,25 +202,6 @@ function vendorColumns(): ColumnDef<Item>[] {
         ) : (
           <span className="text-muted-foreground">—</span>
         ),
-    },
-    {
-      id: "nextReminder",
-      header: "Next reminder",
-      enableSorting: false,
-      cell: ({ row }) => {
-        const today = toDateInputValue(businessToday());
-        const upcoming = (row.original.reminderDates ?? []).filter((d) => d >= today);
-        if (upcoming.length === 0)
-          return <span className="text-muted-foreground">—</span>;
-        return (
-          <span className="text-sm">
-            {formatDate(upcoming[0])}
-            {upcoming.length > 1 && (
-              <span className="text-muted-foreground"> +{upcoming.length - 1} more</span>
-            )}
-          </span>
-        );
-      },
     },
   ];
 }

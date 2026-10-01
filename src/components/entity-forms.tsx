@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X } from "lucide-react";
 import { useSaveNamed, useSaveSales } from "@/lib/queries/entities";
-import { businessToday, formatDate, toDateInputValue } from "@/lib/campaign";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,15 +12,17 @@ export type NamedItem = {
   name: string;
   /** Vendors only. */
   emails?: string[];
-  /** Vendors only — yyyy-mm-dd. */
-  reminderDates?: string[];
 };
 export type SalesItem = { id: string; name: string; email: string };
 
 /**
- * Add/edit form for vendors and clients. Clients are name only; vendors also
- * take reminder emails and dates. Reused by the dedicated management pages and
- * by the campaign form's inline "create".
+ * Add/edit form for vendors and clients — both name only, vendors also take
+ * reminder emails. Reused by the dedicated management pages and by the
+ * campaign form's inline "create".
+ *
+ * Vendor emails are the only thing stored on the vendor itself — there's no
+ * schedule here. Every vendor email is a manual "Remind vendor" send from the
+ * campaign screen; see lib/reminders/vendor.ts.
  *
  * The mutation lives in useSaveNamed rather than here, so both callers get the
  * success toast and cache invalidation without having to remember them.
@@ -44,7 +44,6 @@ export function NamedResourceForm({
 }) {
   const [name, setName] = useState(editing?.name ?? defaultName ?? "");
   const [emails, setEmails] = useState((editing?.emails ?? []).join(", "));
-  const [dates, setDates] = useState<string[]>(editing?.reminderDates ?? []);
   const save = useSaveNamed(resource);
   const isVendor = resource === "vendors";
 
@@ -58,10 +57,7 @@ export function NamedResourceForm({
           {
             id: editing?.id,
             name,
-            ...(isVendor && {
-              emails: splitEmails(emails),
-              reminderDates: dates,
-            }),
+            ...(isVendor && { emails: splitEmails(emails) }),
           },
           { onSuccess: onSaved },
         );
@@ -80,22 +76,19 @@ export function NamedResourceForm({
         />
       </div>
       {isVendor && (
-        <>
-          <div className="space-y-2">
-            <Label htmlFor="vendors-emails">Reminder emails</Label>
-            <Input
-              id="vendors-emails"
-              value={emails}
-              onChange={(e) => setEmails(e.target.value)}
-              placeholder="ops@vendor.com, owner@vendor.com"
-            />
-            <p className="text-xs text-muted-foreground">
-              Optional. Separate several addresses with commas. Without one,
-              this vendor is never emailed.
-            </p>
-          </div>
-          <ReminderDatesField dates={dates} onChange={setDates} />
-        </>
+        <div className="space-y-2">
+          <Label htmlFor="vendors-emails">Reminder emails</Label>
+          <Input
+            id="vendors-emails"
+            value={emails}
+            onChange={(e) => setEmails(e.target.value)}
+            placeholder="ops@vendor.com, owner@vendor.com"
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional. Separate several addresses with commas. Without one,
+            this vendor is never emailed.
+          </p>
+        </div>
       )}
       <DialogFooter>
         {onCancel && (
@@ -120,83 +113,6 @@ function splitEmails(raw: string) {
     .split(/[\s,;]+/)
     .map((e) => e.trim())
     .filter(Boolean);
-}
-
-/**
- * The calendar days a vendor is emailed on. On each one it gets the status of
- * its live sites, one email per campaign. Past dates are kept (they record what
- * was scheduled) but shown struck through.
- */
-function ReminderDatesField({
-  dates,
-  onChange,
-}: {
-  dates: string[];
-  onChange: (dates: string[]) => void;
-}) {
-  const today = toDateInputValue(businessToday());
-  const [pick, setPick] = useState("");
-
-  function add() {
-    if (!pick || dates.includes(pick)) return;
-    onChange([...dates, pick].sort());
-    setPick("");
-  }
-
-  return (
-    <div className="space-y-2">
-      <Label htmlFor="vendors-date">Reminder dates</Label>
-      <div className="flex gap-2">
-        <Input
-          id="vendors-date"
-          type="date"
-          min={today}
-          value={pick}
-          onChange={(e) => setPick(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={add}
-          disabled={!pick || dates.includes(pick)}
-        >
-          Add
-        </Button>
-      </div>
-      {dates.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {dates.map((d) => (
-            <span
-              key={d}
-              className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
-                d < today ? "text-muted-foreground line-through" : ""
-              }`}
-            >
-              {formatDate(d)}
-              <button
-                type="button"
-                aria-label={`Remove ${formatDate(d)}`}
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => onChange(dates.filter((x) => x !== d))}
-              >
-                <X className="size-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          No dates — this vendor won&apos;t get automatic reminders.
-        </p>
-      )}
-    </div>
-  );
 }
 
 /** Add/edit form for sales persons (name + email). Reused by the sales

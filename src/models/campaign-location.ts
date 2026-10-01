@@ -36,11 +36,6 @@ export const campaignLocationSchema = new Schema({
   reminderSentAt: { type: Date, default: null },
   // Pending-creative nag is daily, so only the last send date is tracked.
   creativeReminderSentAt: { type: Date, default: null },
-  // Vendor mid-monitoring nag (daily, like the creative one above) — see
-  // lib/reminders/vendor.ts. Stops for good once a "Mid date" photo is
-  // uploaded for this location's current term; this only dedupes same-day
-  // resends.
-  midReminderSentAt: { type: Date, default: null },
 
   // Attachments live in their own collection keyed by (campaignId, locationId)
   // — see models/attachment.ts. They are deliberately not embedded here: that

@@ -225,8 +225,9 @@ export function serializeNamed(d: { _id: Id; name: string; createdAt?: Date }) {
 }
 
 /**
- * The optional vendor-reminder fields, shared by create and update. Dates are
- * yyyy-mm-dd calendar days and come back deduped, sorted, as UTC midnight.
+ * The optional vendor fields, shared by create and update. No schedule lives
+ * here — every vendor email is a manual "Remind vendor" send from the
+ * campaign screen; see lib/reminders/vendor.ts.
  */
 export const vendorFieldsSchema = z.object({
   emails: z
@@ -234,27 +235,17 @@ export const vendorFieldsSchema = z.object({
     .max(10)
     .transform((a) => [...new Set(a)])
     .optional(),
-  reminderDates: z
-    .array(z.string().regex(DATE_ONLY))
-    .max(200)
-    .transform((a) =>
-      [...new Set(a)].sort().map((d) => new Date(`${d}T00:00:00.000Z`)),
-    )
-    .refine((a) => a.every((d) => !Number.isNaN(d.getTime())), "Invalid date")
-    .optional(),
 });
 
 export function serializeVendor(d: {
   _id: Id;
   name: string;
   emails?: string[] | null;
-  reminderDates?: Date[] | null;
   createdAt?: Date;
 }) {
   return {
     ...serializeNamed(d),
     emails: d.emails ?? [],
-    reminderDates: (d.reminderDates ?? []).map((x) => x.toISOString().slice(0, 10)),
   };
 }
 

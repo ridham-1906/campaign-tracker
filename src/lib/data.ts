@@ -2,12 +2,7 @@ import "server-only";
 import { Types, type PipelineStage } from "mongoose";
 import { connectDB } from "@/lib/db";
 import { Attachment, Campaign, Client, ImageType, Sales, User, Vendor } from "@/models";
-import {
-  DEFAULT_REMINDER_LEAD_DAYS,
-  addDays,
-  businessToday,
-  toDateInputValue,
-} from "@/lib/campaign";
+import { DEFAULT_REMINDER_LEAD_DAYS, addDays, businessToday } from "@/lib/campaign";
 import { ATTACHMENT_STAGES, type AttachmentStage } from "@/lib/attachments";
 import { type ListParams, searchRegex } from "@/lib/api";
 import type {
@@ -842,7 +837,6 @@ export async function getVendorsPage(
       id: String(r._id),
       name: r.name,
       emails: r.emails ?? [],
-      reminderDates: (r.reminderDates ?? []).map((d) => toDateInputValue(d)),
       count: counts.get(String(r._id)) ?? 0,
     })),
     total,

@@ -19,6 +19,15 @@ export const campaignSchema = new Schema(
     term: { type: Number, default: 1 },
     termHistory: { type: [campaignTermSchema], default: [] },
 
+    // Days (UTC midnight) on which this campaign's vendors are asked for each
+    // stage's photo — set from "Remind vendor…" on the campaigns screen, sent
+    // by the hourly cron. See lib/reminders/vendor.ts.
+    vendorReminderDates: {
+      installation: { type: [{ type: Date }], default: [] },
+      mid_date: { type: [{ type: Date }], default: [] },
+      end_date: { type: [{ type: Date }], default: [] },
+    },
+
     locations: {
       type: [campaignLocationSchema],
       validate: {
@@ -35,6 +44,10 @@ campaignSchema.index({ "locations.reminderDate": 1, "locations.endDate": 1 });
 // Backs the same scan's pending-creative arm. No userId prefix on purpose —
 // the cron matches across users, so it stays alongside the per-user index below.
 campaignSchema.index({ "locations.status": 1, "locations.endDate": 1 });
+// The hourly vendor-reminder scan: "which campaigns have today on a stage list".
+campaignSchema.index({ "vendorReminderDates.installation": 1 });
+campaignSchema.index({ "vendorReminderDates.mid_date": 1 });
+campaignSchema.index({ "vendorReminderDates.end_date": 1 });
 // Backs the "is this vendor still in use?" check before a vendor delete.
 campaignSchema.index({ userId: 1, "locations.vendorId": 1 });
 
@@ -52,6 +65,12 @@ campaignSchema.index({ userId: 1, salesId: 1 });
 export type CampaignDoc = InferSchemaType<typeof campaignSchema> & {
   _id: Types.ObjectId;
 };
+
+// A hot reload keeps the previously compiled model, and strict mode would then
+// silently drop vendorReminderDates on save.
+if (mongoose.models.Campaign && !mongoose.models.Campaign.schema.path("vendorReminderDates.installation")) {
+  mongoose.deleteModel("Campaign");
+}
 
 export const Campaign: Model<CampaignDoc> =
   (mongoose.models.Campaign as Model<CampaignDoc>) ??

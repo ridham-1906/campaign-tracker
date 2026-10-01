@@ -125,7 +125,7 @@ export type ImageTypeOption = { id: string; name: string; role: AttachmentStage 
 export type NamedCountView = { id: string; name: string; count: number };
 export type SalesCountView = NamedCountView & { email: string };
 /** Vendor reminder settings. `reminderDates` are yyyy-mm-dd, ascending. */
-export type VendorFields = { emails: string[]; reminderDates: string[] };
+export type VendorFields = { emails: string[] };
 export type VendorCountView = NamedCountView & VendorFields;
 
 // ---- Images ----

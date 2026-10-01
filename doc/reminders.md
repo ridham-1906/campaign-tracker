@@ -30,50 +30,37 @@ is chased **every day** until the status changes, tracked by
 `creativeReminderSentAt`. This is a separate email from the expiry reminder; a
 campaign can receive both on the same day.
 
-## Vendor reminders
+## Vendor photo requests
 
-Vendors are emailed on **calendar dates picked per vendor** (Vendors screen →
-Edit → *Reminder dates*), to any number of optional *Reminder emails*. A vendor
-with no email or no dates is never emailed.
+Vendors store only a name and reminder email(s). The schedule lives on each
+**campaign**: **"Remind vendor…"** on a campaign row opens a dialog with three
+date lists — **Installation photo dates**, **Mid date photo dates**, **End date
+photo dates** — each holding any number of dates (stored as
+`vendorReminderDates.installation / mid_date / end_date`).
 
-On each chosen date the vendor gets **one email per campaign** it has live sites
-on, sent from the campaign owner's Gmail. It lists only that vendor's own sites —
-never another vendor's — with end date and days left. **Only LIVE sites** are
-included: ended and pending-creative sites are left out, and a vendor with no
-live sites on a campaign gets no email for it.
+On each of those dates, the hourly `/api/cron/reminders` run emails every
+vendor on that campaign for that stage's photo:
 
-- Dedupe is a `VendorReminder` row per (vendor, campaign, day), claimed *before*
-  sending so overlapping runs can't double-send. A failed send releases the
-  claim, so the next hourly run retries.
-- A date that passes without a successful send is **not** caught up later.
-- Vendor reminders run inside `/api/cron/reminders` after the expiry pass,
-  within what's left of the same time budget; the response carries a `vendor`
-  object with its own counters.
-- Implementation: [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts),
-  template [`src/lib/mail/vendor-reminder.ts`](../src/lib/mail/vendor-reminder.ts).
+- **one email per vendor**, listing only its own sites — never another
+  vendor's; a vendor with no email is skipped;
+- only sites that **don't have that photo yet** for the current term (an
+  `Attachment` of that stage);
+- installation and mid-date only ask about **live** sites; the closing photo
+  is asked whatever the status, since it's wanted after the run.
 
-## Vendor mid-monitoring reminders
+A `VendorReminder` row is logged per (vendor, campaign, day, stage), and later
+runs that day skip any vendor already logged — so the hourly repeats retry
+failures without double-sending. A date that passes without the cron running
+is not caught up later. The cron response carries a `vendor` object with sends
+per stage.
 
-Separate from the vendor reminders above, and not tied to a vendor's chosen
-dates: once a location's **mid date** arrives, its vendor (if it has an email)
-is asked for the mid-campaign monitoring photo — one email per campaign,
-listing just the sites of that vendor's that reached their mid date.
-
-- Only **LIVE** locations are considered — ended sites, and ones whose end date
-  has passed, are dropped, same as the vendor reminders above.
-- It **repeats every day** the mid date has passed, tracked by
-  `midReminderSentAt`, until a "Mid date" photo is uploaded against that
-  location's current term (checked via the `Attachment` collection) — then it
-  stops for good, even if the mid date already came and went.
-- Renewing a campaign starts a fresh term, so a location keeps a past term's
-  mid photo on file but is asked again once its new mid date arrives.
-- Runs alongside the vendor reminders above, inside `/api/cron/reminders`; the
-  response carries a `vendorMid` object with its own counters.
-- Implementation: `findMidMonitoringJobs` / `runVendorMidReminders` in
-  [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts), template
-  [`src/lib/mail/vendor-mid-reminder.ts`](../src/lib/mail/vendor-mid-reminder.ts).
-- Not sent by the manual "Send reminder" button — that only sends the
-  sites-are-due vendor email, not the mid-monitoring ask.
+- Implementation: `runScheduledVendorReminders` / `sendVendorMailNow` in
+  [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts); the dates
+  are read and saved through
+  [`src/app/api/campaigns/[id]/remind-vendor/route.ts`](../src/app/api/campaigns/[id]/remind-vendor/route.ts)
+  (GET / PUT); template
+  [`src/lib/mail/vendor-monitoring-reminder.ts`](../src/lib/mail/vendor-monitoring-reminder.ts).
+- Separate from the sales "Send reminder" button, which never emails a vendor.
 
 ## The job
 
@@ -132,12 +119,8 @@ schedule is recomputed from scratch.
 
 **Send reminder** on a campaign (or a single location) emails the sales person
 immediately and advances the schedule past today, so the automated series
-doesn't fire again for those locations the same day.
-
-It then emails each vendor (with an address) on those locations about its own
-live sites (pending-creative and ended ones are skipped), and records the send so the automated vendor reminder skips that
-vendor/campaign today. A vendor failure is reported back as a warning toast; it
-doesn't undo the sales email.
+doesn't fire again for those locations the same day. It never emails a
+vendor — see "Remind vendor" above, a separate action with its own dialog.
 
 ## Email templates
 
@@ -148,7 +131,8 @@ Templates live in [`src/lib/mail/`](../src/lib/mail), one file per type, sharing
 | --- | --- |
 | `expiry-reminder.ts` | Campaign expiring soon |
 | `creative-reminder.ts` | Creative still pending |
-| `vendor-reminder.ts` | Vendor site status on a chosen date |
+| `vendor-reminder.ts` | Vendor site status update |
+| `vendor-monitoring-reminder.ts` | Vendor installation/mid-date/closing photo ask |
 | `error-update.ts` | Failure digest for the maintainer |
 
 `src/lib/mailer.ts` only builds transports and delivers a rendered message.
@@ -215,8 +199,15 @@ milestone sends it, and the remaining runs are free retries for anything that
 failed or was deferred. Creative runs once, since it is a daily nudge and the
 per-day dedupe would ignore the extra calls anyway.
 
-**Vercel Cron** needs a `vercel.json` and only permits daily schedules on the
-Hobby plan, so an external scheduler is preferred for the hourly one.
+**Vercel Cron** is set up in [`vercel.json`](../vercel.json) for
+`/api/cron/reminders` (expiry reminders **and** the vendor photo requests):
+`30 5-13 * * *`. Vercel schedules are always UTC, so that is 11:00–19:00 IST
+on the hour-and-a-half — nine runs a day, matching the IST window above. Vercel
+sends `Authorization: Bearer $CRON_SECRET` itself, so `CRON_SECRET` just has to
+be set in the project's environment variables. Hourly schedules need the Pro
+plan (Hobby only allows daily). The creative route is not scheduled there; add
+`{ "path": "/api/cron/creative-reminders", "schedule": "30 5 * * *" }` if it
+isn't already called from elsewhere.
 
 ### Running it by hand
 
