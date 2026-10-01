@@ -38,8 +38,9 @@ date lists — **Installation photo dates**, **Mid date photo dates**, **End dat
 photo dates** — each holding any number of dates (stored as
 `vendorReminderDates.installation / mid_date / end_date`).
 
-On each of those dates, the hourly `/api/cron/reminders` run emails every
-vendor on that campaign for that stage's photo:
+On each of those dates, the hourly `/api/cron/vendor-reminders` run (its own
+route, separate from the sales one) emails every vendor on that campaign for
+that stage's photo:
 
 - **one email per vendor**, listing only its own sites — never another
   vendor's; a vendor with no email is skipped;
@@ -51,8 +52,7 @@ vendor on that campaign for that stage's photo:
 A `VendorReminder` row is logged per (vendor, campaign, day, stage), and later
 runs that day skip any vendor already logged — so the hourly repeats retry
 failures without double-sending. A date that passes without the cron running
-is not caught up later. The cron response carries a `vendor` object with sends
-per stage.
+is not caught up later. The cron response carries the sends per stage.
 
 - Implementation: `runScheduledVendorReminders` / `sendVendorMailNow` in
   [`src/lib/reminders/vendor.ts`](../src/lib/reminders/vendor.ts); the dates
@@ -199,9 +199,9 @@ milestone sends it, and the remaining runs are free retries for anything that
 failed or was deferred. Creative runs once, since it is a daily nudge and the
 per-day dedupe would ignore the extra calls anyway.
 
-**Vercel Cron** is set up in [`vercel.json`](../vercel.json) for
-`/api/cron/reminders` (expiry reminders **and** the vendor photo requests):
-`30 5-13 * * *`. Vercel schedules are always UTC, so that is 11:00–19:00 IST
+**Vercel Cron** (a `vercel.json` with one entry per route) can drive
+`/api/cron/reminders` (sales expiry) and `/api/cron/vendor-reminders` (vendor
+photo requests), both on `30 5-13 * * *`. Vercel schedules are always UTC, so that is 11:00–19:00 IST
 on the hour-and-a-half — nine runs a day, matching the IST window above. Vercel
 sends `Authorization: Bearer $CRON_SECRET` itself, so `CRON_SECRET` just has to
 be set in the project's environment variables. Hourly schedules need the Pro

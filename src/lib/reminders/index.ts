@@ -13,9 +13,9 @@ import { creativeReminders } from "./creative";
  * Their differences live in `expiry.ts` and `creative.ts`; the scheduling,
  * pooled sending and bookkeeping they share live in `runner.ts`.
  *
- * Vendor photo requests ride along on the hourly expiry route: each campaign
- * holds its own installation / mid / end date lists, set from "Remind vendor…"
- * on the campaigns screen. See `vendor.ts`.
+ * Vendor photo requests are a third job with their own route
+ * (/api/cron/vendor-reminders): each campaign holds its own installation / mid
+ * / end date lists, set from "Remind vendor…". See `vendor.ts`.
  */
 
 export const runExpiryReminders = (now?: Date) => runReminders(expiryReminders, now);

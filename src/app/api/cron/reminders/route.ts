@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runExpiryReminders, runScheduledVendorReminders } from "@/lib/reminders";
+import { runExpiryReminders } from "@/lib/reminders";
 import { cronGuard } from "@/lib/api";
 
 // Node runtime required (mongoose + nodemailer are not edge-compatible).
@@ -17,9 +17,7 @@ export const maxDuration = 60;
  * the hour. Safe to repeat: sends are recorded per location, so a repeat run
  * only picks up what's still outstanding.
  *
- * Vendor photo requests run here too: any campaign with today on one of its
- * installation / mid / end date lists (set from "Remind vendor…") gets that
- * stage's ask sent to its vendors. Repeats skip vendors already sent today.
+ * Vendor photo requests have their own route, /api/cron/vendor-reminders.
  *
  * Pending-creative chasing lives at /api/cron/creative-reminders, since it runs
  * once a day rather than hourly.
@@ -29,8 +27,7 @@ async function handle(req: NextRequest) {
   if (denied) return denied;
 
   const result = await runExpiryReminders();
-  const vendor = await runScheduledVendorReminders();
-  return NextResponse.json({ ok: true, ...result, vendor });
+  return NextResponse.json({ ok: true, ...result });
 }
 
 export async function GET(req: NextRequest) {
