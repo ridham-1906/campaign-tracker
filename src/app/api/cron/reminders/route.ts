@@ -17,6 +17,8 @@ export const maxDuration = 60;
  * the hour. Safe to repeat: sends are recorded per location, so a repeat run
  * only picks up what's still outstanding.
  *
+ * Vendor photo requests have their own route, /api/cron/vendor-reminders.
+ *
  * Pending-creative chasing lives at /api/cron/creative-reminders, since it runs
  * once a day rather than hourly.
  */

@@ -210,3 +210,49 @@ export function useSendReminder() {
       ),
   });
 }
+
+/** The three stages a vendor can be asked for a photo of. */
+export type VendorStage = "installation" | "mid_date" | "end_date";
+
+/** yyyy-mm-dd lists — on each date the vendor gets that stage's photo request. */
+export type VendorSchedule = Record<VendorStage, string[]>;
+
+const vendorScheduleKey = (campaignId: string) =>
+  ["campaigns", "vendor-schedule", campaignId] as const;
+
+/** A campaign's vendor photo-request dates, for the "Remind vendor…" dialog. */
+export function useVendorSchedule(campaignId: string | null) {
+  return useQuery({
+    queryKey: vendorScheduleKey(campaignId ?? ""),
+    queryFn: () =>
+      apiJson<VendorSchedule>(`/api/campaigns/${campaignId}/remind-vendor`),
+    enabled: Boolean(campaignId),
+  });
+}
+
+export function useSaveVendorSchedule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ campaignId, schedule }: { campaignId: string; schedule: VendorSchedule }) =>
+      apiJson<VendorSchedule>(`/api/campaigns/${campaignId}/remind-vendor`, {
+        method: "PUT",
+        body: JSON.stringify(schedule),
+      }),
+    onSuccess: (saved, { campaignId }) => {
+      const n = saved.installation.length + saved.mid_date.length + saved.end_date.length;
+      toast.success(
+        n === 0
+          ? "Vendor reminders cleared"
+          : `Vendor reminders saved — ${n} date${n === 1 ? "" : "s"} scheduled`,
+      );
+      queryClient.setQueryData(vendorScheduleKey(campaignId), saved);
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof ApiError
+          ? apiError(error.data, "Failed to save")
+          : "Failed to save",
+      ),
+  });
+}

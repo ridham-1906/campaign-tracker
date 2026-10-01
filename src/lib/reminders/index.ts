@@ -1,10 +1,10 @@
 import "server-only";
-import { runReminders, findDueJobs } from "./runner";
+import { runReminders, findDueJobs, DEFAULT_TIME_BUDGET_MS } from "./runner";
 import { expiryReminders } from "./expiry";
 import { creativeReminders } from "./creative";
 
 /**
- * Two reminder jobs on separate schedules, each with its own route:
+ * Two scheduled reminder jobs, each with its own route:
  *
  *   expiry   — 7/5/3/2/1 days before a location ends, run hourly so a failed
  *              send retries within the hour
@@ -12,6 +12,10 @@ import { creativeReminders } from "./creative";
  *
  * Their differences live in `expiry.ts` and `creative.ts`; the scheduling,
  * pooled sending and bookkeeping they share live in `runner.ts`.
+ *
+ * Vendor photo requests are a third job with their own route
+ * (/api/cron/vendor-reminders): each campaign holds its own installation / mid
+ * / end date lists, set from "Remind vendor…". See `vendor.ts`.
  */
 
 export const runExpiryReminders = (now?: Date) => runReminders(expiryReminders, now);
@@ -19,5 +23,7 @@ export const runExpiryReminders = (now?: Date) => runReminders(expiryReminders, 
 export const runCreativeReminders = (now?: Date) =>
   runReminders(creativeReminders, now);
 
-export { expiryReminders, creativeReminders, findDueJobs };
+export { sendVendorMailNow, runScheduledVendorReminders } from "./vendor";
+
+export { expiryReminders, creativeReminders, findDueJobs, DEFAULT_TIME_BUDGET_MS };
 export type { ReminderRunResult, ReminderKind, Job } from "./types";

@@ -26,9 +26,9 @@ import {
 } from "@/components/ui/data-table";
 import { RowActions } from "@/components/ui/row-actions";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import type { NamedCountView } from "@/lib/view-types";
+import type { NamedCountView, VendorFields } from "@/lib/view-types";
 
-type Item = NamedCountView;
+type Item = NamedCountView & Partial<VendorFields>;
 
 export function NamedResourceManager({
   resource,
@@ -87,6 +87,7 @@ export function NamedResourceManager({
           <span className="font-medium">{row.original.name}</span>
         ),
       },
+      ...(resource === "vendors" ? vendorColumns() : []),
       {
         accessorKey: "count",
         header: "Campaigns",
@@ -128,7 +129,7 @@ export function NamedResourceManager({
         ),
       },
     ],
-    [openEdit, remove],
+    [resource, openEdit, remove],
   );
 
   return (
@@ -185,4 +186,22 @@ export function NamedResourceManager({
       {confirmDialog}
     </div>
   );
+}
+
+/** Reminder emails, vendors only — see "Remind vendor" on the campaign
+ * screen for actually sending anything; nothing is scheduled from here. */
+function vendorColumns(): ColumnDef<Item>[] {
+  return [
+    {
+      id: "emails",
+      header: "Reminder emails",
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.emails?.length ? (
+          <span className="text-sm">{row.original.emails.join(", ")}</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+  ];
 }

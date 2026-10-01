@@ -30,7 +30,7 @@ const USER_CONCURRENCY = Math.max(
  * on the next run, since the query picks up any past-due unsent reminder.
  * Override with REMINDER_TIME_BUDGET_MS.
  */
-const DEFAULT_TIME_BUDGET_MS = Number(
+export const DEFAULT_TIME_BUDGET_MS = Number(
   process.env.REMINDER_TIME_BUDGET_MS ?? 25_000,
 );
 
@@ -264,19 +264,22 @@ export async function runReminders(
     }
   }
 
-  // Work through the user groups with a bounded number in flight at once.
-  const groups = [...byUser.values()];
+  await runPool([...byUser.values()], runUser);
+
+  return result;
+}
+
+/** Work through the per-user groups with a bounded number in flight at once. */
+export async function runPool<T>(groups: T[], run: (group: T) => Promise<void>) {
   let next = 0;
   const workers = Array.from(
     { length: Math.min(USER_CONCURRENCY, groups.length) },
     async () => {
       while (next < groups.length) {
         const group = groups[next++];
-        await runUser(group);
+        await run(group);
       }
     },
   );
   await Promise.all(workers);
-
-  return result;
 }

@@ -7,12 +7,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DialogFooter } from "@/components/ui/dialog";
 
-export type NamedItem = { id: string; name: string };
+export type NamedItem = {
+  id: string;
+  name: string;
+  /** Vendors only. */
+  emails?: string[];
+};
 export type SalesItem = { id: string; name: string; email: string };
 
 /**
- * Add/edit form for vendors and clients (name only). Reused by the dedicated
- * management pages and by the campaign form's inline "create".
+ * Add/edit form for vendors and clients — both name only, vendors also take
+ * reminder emails. Reused by the dedicated management pages and by the
+ * campaign form's inline "create".
+ *
+ * Vendor emails are the only thing stored on the vendor itself — there's no
+ * schedule here. Every vendor email is a manual "Remind vendor" send from the
+ * campaign screen; see lib/reminders/vendor.ts.
  *
  * The mutation lives in useSaveNamed rather than here, so both callers get the
  * success toast and cache invalidation without having to remember them.
@@ -33,7 +43,9 @@ export function NamedResourceForm({
   onCancel?: () => void;
 }) {
   const [name, setName] = useState(editing?.name ?? defaultName ?? "");
+  const [emails, setEmails] = useState((editing?.emails ?? []).join(", "));
   const save = useSaveNamed(resource);
+  const isVendor = resource === "vendors";
 
   return (
     <form
@@ -41,7 +53,14 @@ export function NamedResourceForm({
         e.preventDefault();
         // onSaved is a local UI concern (close the dialog, select the new
         // option), so it stays at the call site and only fires on success.
-        save.mutate({ id: editing?.id, name }, { onSuccess: onSaved });
+        save.mutate(
+          {
+            id: editing?.id,
+            name,
+            ...(isVendor && { emails: splitEmails(emails) }),
+          },
+          { onSuccess: onSaved },
+        );
       }}
       className="space-y-4"
     >
@@ -56,6 +75,21 @@ export function NamedResourceForm({
           autoFocus
         />
       </div>
+      {isVendor && (
+        <div className="space-y-2">
+          <Label htmlFor="vendors-emails">Reminder emails</Label>
+          <Input
+            id="vendors-emails"
+            value={emails}
+            onChange={(e) => setEmails(e.target.value)}
+            placeholder="ops@vendor.com, owner@vendor.com"
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional. Separate several addresses with commas. Without one,
+            this vendor is never emailed.
+          </p>
+        </div>
+      )}
       <DialogFooter>
         {onCancel && (
           <Button type="button" variant="ghost" onClick={onCancel}>
@@ -72,6 +106,13 @@ export function NamedResourceForm({
       </DialogFooter>
     </form>
   );
+}
+
+function splitEmails(raw: string) {
+  return raw
+    .split(/[\s,;]+/)
+    .map((e) => e.trim())
+    .filter(Boolean);
 }
 
 /** Add/edit form for sales persons (name + email). Reused by the sales

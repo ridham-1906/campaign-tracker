@@ -8,14 +8,19 @@ import {
   notFound,
   ok,
   readJson,
-  serializeNamed,
+  serializeVendor,
+  vendorFieldsSchema,
 } from "@/lib/api";
 import { countCampaignsUsing, isValidId } from "@/lib/services";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const updateSchema = z.object({ name: z.string().min(1) });
+// Every field optional, so the campaign form's inline rename can't wipe the
+// vendor's emails or dates by leaving them out.
+const updateSchema = z
+  .object({ name: z.string().min(1).optional() })
+  .extend(vendorFieldsSchema.shape);
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -29,7 +34,7 @@ export async function GET(_req: Request, { params }: Params) {
   await connectDB();
   const doc = await Vendor.findById(id).lean();
   if (!doc) return notFound("Vendor not found");
-  return ok(serializeNamed(doc));
+  return ok(serializeVendor(doc));
 }
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -48,7 +53,7 @@ export async function PATCH(req: Request, { params }: Params) {
     new: true,
   }).lean();
   if (!doc) return notFound("Vendor not found");
-  return ok(serializeNamed(doc));
+  return ok(serializeVendor(doc));
 }
 
 export async function DELETE(_req: Request, { params }: Params) {

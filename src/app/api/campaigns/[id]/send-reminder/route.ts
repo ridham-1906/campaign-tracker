@@ -38,6 +38,9 @@ type LocationLike = {
  * Immediately email the campaign's sales person. With `locationId`, nudges about
  * that one placement; without it, sends a single digest covering every location
  * that hasn't ended yet.
+ *
+ * Vendors are a separate action — see "Remind vendor" in
+ * api/campaigns/[id]/remind-vendor/route.ts — not piggybacked on this one.
  */
 export async function POST(req: Request, { params }: Params) {
   const auth = await authGuard();
@@ -84,11 +87,13 @@ export async function POST(req: Request, { params }: Params) {
     );
   }
 
+  const appPassword = decryptSecret(user.appPassword);
+
   try {
     await sendMail({
       fromName: user.name,
       fromEmail: user.email,
-      appPassword: decryptSecret(user.appPassword),
+      appPassword,
       to: sales.email,
       message: buildExpiryReminder({
         fromName: user.name,

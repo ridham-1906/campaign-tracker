@@ -224,3 +224,28 @@ export function serializeNamed(d: { _id: Id; name: string; createdAt?: Date }) {
   return { id: d._id.toString(), name: d.name, createdAt: d.createdAt };
 }
 
+/**
+ * The optional vendor fields, shared by create and update. No schedule lives
+ * here — every vendor email is a manual "Remind vendor" send from the
+ * campaign screen; see lib/reminders/vendor.ts.
+ */
+export const vendorFieldsSchema = z.object({
+  emails: z
+    .array(z.string().trim().toLowerCase().email())
+    .max(10)
+    .transform((a) => [...new Set(a)])
+    .optional(),
+});
+
+export function serializeVendor(d: {
+  _id: Id;
+  name: string;
+  emails?: string[] | null;
+  createdAt?: Date;
+}) {
+  return {
+    ...serializeNamed(d),
+    emails: d.emails ?? [],
+  };
+}
+
