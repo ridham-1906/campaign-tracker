@@ -13,7 +13,5 @@ export default async function CampaignDetailPage({ params }: Params) {
   const { id } = await params;
   const session = await requireSession();
 
-  return (
-    <CampaignDetail id={id} isAdmin={session.isAdmin} currentUserId={session.userId} />
-  );
+  return <CampaignDetail id={id} currentUserId={session.userId} />;
 }
