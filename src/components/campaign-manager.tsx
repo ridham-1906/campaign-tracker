@@ -2,17 +2,10 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
-import {
-  addDays,
-  businessToday,
-  daysUntil,
-  formatDate,
-  lifecycleState,
-  startOfDay,
-  toDateInputValue,
-} from "@/lib/campaign";
+import { daysUntil, formatDate, lifecycleState } from "@/lib/campaign";
 import {
   useCampaignStatsQuery,
   useCampaignsQuery,
@@ -20,21 +13,17 @@ import {
   useRenewCampaign,
   useSaveCampaign,
   useSendReminder,
-  useSaveVendorSchedule,
-  useVendorSchedule,
-  type VendorSchedule,
-  type VendorStage,
 } from "@/lib/queries/campaigns";
 import { useEntityOptions } from "@/lib/queries/entities";
-import { CampaignLocationsTable } from "@/components/campaign-locations-table";
+import { toDraft, renewalDraft, locationPayload } from "@/lib/campaign-draft";
 import { useConfirm } from "@/components/use-confirm";
 import {
   CampaignForm,
   emptyCampaign,
   type CampaignDraft,
   type CampaignFormMode,
-  type LocationDraft,
 } from "@/components/campaign-form";
+import { RemindVendorDialog } from "@/components/remind-vendor-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -47,13 +36,9 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { X } from "lucide-react";
 import type {
   CampaignListLocationView,
   CampaignListView,
@@ -90,89 +75,6 @@ function earliestStart(c: CampaignRow) {
   return Math.min(...c.locations.map((l) => new Date(l.startDate).getTime()));
 }
 
-/** Dimensions are numbers on the wire and `<Input>` strings in the draft. */
-function sizeText(v: number | null) {
-  return v == null ? "" : String(v);
-}
-
-function toDraft(c: CampaignRow): CampaignDraft {
-  return {
-    clientId: c.client.id,
-    salesId: c.sales.id,
-    category: c.category,
-    locations: c.locations.map(
-      (l): LocationDraft => ({
-        id: l.id,
-        city: l.city,
-        location: l.location,
-        medium: l.medium,
-        type: l.type,
-        width: sizeText(l.width),
-        height: sizeText(l.height),
-        sqft: sizeText(l.sqft),
-        vendorId: l.vendor.id,
-        startDate: toDateInputValue(l.startDate),
-        midDate: l.midDate ? toDateInputValue(l.midDate) : "",
-        endDate: toDateInputValue(l.endDate),
-        status: l.status,
-      }),
-    ),
-  };
-}
-
-const MS_PER_DAY = 86_400_000;
-
-/**
- * A renewal moves the *same* campaign into its next booking term — it does not
- * write a second one. Location ids are therefore kept, not dropped: the server
- * archives the outgoing dates against those ids, and every photo already
- * uploaded stays on the campaign, tagged with the term it was taken under.
- *
- * Each location is shifted on its own, keeping its original length, so a
- * campaign whose placements ran to different end dates renews as the same
- * staggered set rather than being flattened onto one term. The new term starts
- * the day after the old one ended — or today, if that has already passed, so
- * renewing a long-expired campaign never proposes dates in the past.
- *
- * Every status resets to LIVE: a renewal is a fresh booking, not a
- * continuation of whatever state the last one finished in.
- */
-function renewalDraft(c: CampaignRow): CampaignDraft {
-  const today = businessToday();
-
-  return {
-    clientId: c.client.id,
-    salesId: c.sales.id,
-    category: c.category,
-    locations: c.locations.map((l): LocationDraft => {
-      const oldStart = startOfDay(new Date(l.startDate));
-      const oldEnd = startOfDay(new Date(l.endDate));
-      const start = new Date(
-        Math.max(addDays(oldEnd, 1).getTime(), today.getTime()),
-      );
-      const shift = Math.round((start.getTime() - oldStart.getTime()) / MS_PER_DAY);
-
-      return {
-        id: l.id,
-        city: l.city,
-        location: l.location,
-        medium: l.medium,
-        type: l.type,
-        width: sizeText(l.width),
-        height: sizeText(l.height),
-        sqft: sizeText(l.sqft),
-        vendorId: l.vendor.id,
-        startDate: toDateInputValue(start),
-        midDate: l.midDate
-          ? toDateInputValue(addDays(startOfDay(new Date(l.midDate)), shift))
-          : "",
-        endDate: toDateInputValue(addDays(oldEnd, shift)),
-        status: "LIVE",
-      };
-    }),
-  };
-}
-
 export function CampaignManager({
   isAdmin = false,
   currentUserId,
@@ -182,6 +84,7 @@ export function CampaignManager({
   isAdmin?: boolean;
   currentUserId?: string;
 }) {
+  const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -263,27 +166,6 @@ export function CampaignManager({
     setFormNonce((n) => n + 1);
     setOpen(true);
   }, []);
-
-  /** The location fields as both endpoints want them. */
-  function locationPayload(l: LocationDraft) {
-    return {
-      ...(l.id ? { id: l.id } : {}),
-      city: l.city,
-      location: l.location,
-      medium: l.medium,
-      // Sent as the raw input strings — the API's zod schema coerces them and
-      // turns "" into "not set" rather than 0.
-      type: l.type,
-      width: l.width,
-      height: l.height,
-      sqft: l.sqft,
-      vendorId: l.vendorId,
-      startDate: l.startDate,
-      midDate: l.midDate,
-      endDate: l.endDate,
-      status: l.status,
-    };
-  }
 
   // Closing the dialog is a local UI concern, so it stays here — and only
   // fires on success, leaving the form intact if the write failed.
@@ -480,7 +362,7 @@ export function CampaignManager({
               <DropdownMenuItem
                 onClick={() => setRemindVendorFor(row.original.id)}
               >
-                Remind vendor…
+                Remind vendor
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openEdit(row.original)}>
                 Edit
@@ -500,30 +382,6 @@ export function CampaignManager({
       },
     ],
     [isAdmin, isOwn, openEdit, openRenew, remove, sendReminder],
-  );
-
-  const renderLocations = useCallback(
-    (c: CampaignRow) => (
-      <CampaignLocationsTable
-        locations={c.locations}
-        actions={(l) =>
-          isOwn(c) && (
-            <RowActions>
-              <DropdownMenuItem
-                disabled={stateOf(l) === "ENDED"}
-                onClick={() => sendReminder(c, l.id)}
-              >
-                Send reminder
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => openEdit(c)}>
-                Edit campaign
-              </DropdownMenuItem>
-            </RowActions>
-          )
-        }
-      />
-    ),
-    [isOwn, openEdit, sendReminder],
   );
 
   return (
@@ -599,7 +457,7 @@ export function CampaignManager({
             onSearchChange={table.setSearch}
             isLoading={query.isLoading}
             isFetching={query.isFetching}
-            renderExpanded={renderLocations}
+            onRowClick={(c) => router.push(`/campaigns/${c.id}`)}
             searchPlaceholder="Search client, sales, location, city, vendor…"
             empty={
               statusFilter === "all" ? (
@@ -674,189 +532,6 @@ export function CampaignManager({
       />
 
       {confirmDialog}
-    </div>
-  );
-}
-
-const VENDOR_STAGE_FIELDS: { stage: VendorStage; label: string; hint: string }[] = [
-  {
-    stage: "installation",
-    label: "Installation photo dates",
-    hint: "On each date, vendors are asked for installation photos.",
-  },
-  {
-    stage: "mid_date",
-    label: "Mid date photo dates",
-    hint: "On each date, vendors are asked for mid-campaign photos.",
-  },
-  {
-    stage: "end_date",
-    label: "End date photo dates",
-    hint: "On each date, vendors are asked for closing photos.",
-  },
-];
-
-const EMPTY_SCHEDULE: VendorSchedule = { installation: [], mid_date: [], end_date: [] };
-
-/**
- * "Remind vendor…": three date lists, one per stage. On each date, every
- * vendor on this campaign is emailed for that stage's photo — only about its
- * own sites, and only the ones still missing it. Sent by the hourly cron; a
- * date set to today goes out on the next run.
- */
-function RemindVendorDialog({
-  campaignId,
-  onClose,
-}: {
-  campaignId: string | null;
-  onClose: () => void;
-}) {
-  const query = useVendorSchedule(campaignId);
-  const save = useSaveVendorSchedule();
-
-  return (
-    <Dialog
-      open={campaignId !== null}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Remind vendor</DialogTitle>
-        </DialogHeader>
-        {query.isLoading || !campaignId ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
-        ) : (
-          <VendorScheduleForm
-            // Remount per campaign so the draft starts from what's saved.
-            key={campaignId}
-            initial={query.data ?? EMPTY_SCHEDULE}
-            saving={save.isPending}
-            onCancel={onClose}
-            onSave={(schedule) =>
-              save.mutate({ campaignId, schedule }, { onSuccess: onClose })
-            }
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function VendorScheduleForm({
-  initial,
-  saving,
-  onCancel,
-  onSave,
-}: {
-  initial: VendorSchedule;
-  saving: boolean;
-  onCancel: () => void;
-  onSave: (schedule: VendorSchedule) => void;
-}) {
-  const [schedule, setSchedule] = useState<VendorSchedule>(initial);
-
-  return (
-    <>
-      <div className="space-y-4">
-        {VENDOR_STAGE_FIELDS.map((f) => (
-          <DateListField
-            key={f.stage}
-            id={`remind-vendor-${f.stage}`}
-            label={f.label}
-            hint={f.hint}
-            dates={schedule[f.stage]}
-            onChange={(dates) => setSchedule((prev) => ({ ...prev, [f.stage]: dates }))}
-          />
-        ))}
-      </div>
-      <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="button" disabled={saving} onClick={() => onSave(schedule)}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
-      </DialogFooter>
-    </>
-  );
-}
-
-/** Pick a date, Add, repeat — each shown as a removable pill. */
-function DateListField({
-  id,
-  label,
-  hint,
-  dates,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  hint: string;
-  dates: string[];
-  onChange: (dates: string[]) => void;
-}) {
-  const today = toDateInputValue(businessToday());
-  const [pick, setPick] = useState("");
-
-  function add() {
-    if (!pick || dates.includes(pick)) return;
-    onChange([...dates, pick].sort());
-    setPick("");
-  }
-
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <div className="flex gap-2">
-        <Input
-          id={id}
-          type="date"
-          min={today}
-          value={pick}
-          onChange={(e) => setPick(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={add}
-          disabled={!pick || dates.includes(pick)}
-        >
-          Add
-        </Button>
-      </div>
-      {dates.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {dates.map((d) => (
-            <span
-              key={d}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs",
-                d < today && "text-muted-foreground line-through",
-              )}
-            >
-              {formatDate(d)}
-              <button
-                type="button"
-                aria-label={`Remove ${formatDate(d)}`}
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => onChange(dates.filter((x) => x !== d))}
-              >
-                <X className="size-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      )}
     </div>
   );
 }

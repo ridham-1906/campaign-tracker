@@ -11,13 +11,24 @@ function stateOf(l: CampaignListLocationView) {
   return lifecycleState({ status: l.status, endDate: new Date(l.endDate) });
 }
 
+/** Live first, then pending creative, then ended — so a campaign's finished
+ * sites sink to the bottom instead of sitting wherever they fall in storage
+ * order. Stable otherwise: locations sharing a state keep their relative
+ * order. */
+const STATE_RANK = { LIVE: 0, PENDING_CREATIVE: 1, ENDED: 2 } as const;
+
+function sortedByState(locations: CampaignListLocationView[]) {
+  return [...locations].sort(
+    (a, b) => STATE_RANK[stateOf(a)] - STATE_RANK[stateOf(b)],
+  );
+}
+
 /**
- * One campaign's locations, as the expanded row under both the Campaigns table
- * and the dashboard — the same columns in both, from one copy.
+ * One campaign's locations — shown on the campaign page.
  *
- * `actions` is the trailing per-location menu the Campaigns screen adds for a
- * campaign the viewer owns. The dashboard reads every user's campaigns and
- * writes none of them, so it passes nothing and the column stays empty.
+ * `actions` is the trailing per-location menu; the viewer only gets one for a
+ * campaign they own, so a read-only view (an admin looking at someone else's)
+ * passes nothing and the column stays empty.
  */
 export function CampaignLocationsTable({
   locations,
@@ -48,7 +59,7 @@ export function CampaignLocationsTable({
           </tr>
         </thead>
         <tbody>
-          {locations.map((l) => {
+          {sortedByState(locations).map((l) => {
             const left = daysUntil(new Date(l.endDate));
             const ended = stateOf(l) === "ENDED";
             return (
@@ -59,20 +70,12 @@ export function CampaignLocationsTable({
                 <td className="py-2 pr-4">{l.location}</td>
                 <td className="py-2 pr-4">{l.city}</td>
                 <td className="py-2 pr-4">{l.medium}</td>
-                <td className="py-2 pr-4 text-muted-foreground">
-                  {l.width ?? "—"}
-                </td>
-                <td className="py-2 pr-4 text-muted-foreground">
-                  {l.height ?? "—"}
-                </td>
-                <td className="py-2 pr-4 text-muted-foreground">
-                  {l.sqft ?? "—"}
-                </td>
+                <td className="py-2 pr-4">{l.width ?? "—"}</td>
+                <td className="py-2 pr-4">{l.height ?? "—"}</td>
+                <td className="py-2 pr-4">{l.sqft ?? "—"}</td>
                 <td className="py-2 pr-4">{l.type || "—"}</td>
                 <td className="py-2 pr-4">{l.vendor.name}</td>
-                <td className="py-2 pr-4 text-muted-foreground">
-                  {formatDate(l.startDate)}
-                </td>
+                <td className="py-2 pr-4">{formatDate(l.startDate)}</td>
                 <td className="py-2 pr-4">
                   {formatDate(l.endDate)}
                 </td>

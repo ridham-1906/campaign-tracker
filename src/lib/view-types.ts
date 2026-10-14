@@ -72,6 +72,10 @@ export type CampaignView = {
   /** Past periods, oldest first. Empty until the first renewal. */
   termHistory: CampaignTermView[];
   locations: LocationView[];
+  /** The backend user this campaign belongs to — who it shows up for, and who
+   * the campaign detail page lets edit it. Always present; optional only so a
+   * caller that never needs it isn't forced to carry it around. */
+  owner?: PersonView;
 };
 
 /**

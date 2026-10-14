@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useDeleteEntity, useSalesListQuery } from "@/lib/queries/entities";
 import { SalesForm } from "@/components/entity-forms";
+import { SalesCampaignsDialog } from "@/components/sales-campaigns-dialog";
 import { useConfirm } from "@/components/use-confirm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,7 @@ export function SalesManager() {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
+  const [campaignsFor, setCampaignsFor] = useState<Item | null>(null);
 
   const table = useTableState();
   const query = useSalesListQuery({
@@ -91,9 +93,14 @@ export function SalesManager() {
         enableSorting: false,
         cell: ({ row }) =>
           row.original.count > 0 ? (
-            <Badge variant="secondary" className="text-xs">
-              {row.original.count} campaign{row.original.count === 1 ? "" : "s"}
-            </Badge>
+            <button type="button" onClick={() => setCampaignsFor(row.original)}>
+              <Badge
+                variant="secondary"
+                className="cursor-pointer text-xs hover:bg-secondary/80"
+              >
+                {row.original.count} campaign{row.original.count === 1 ? "" : "s"}
+              </Badge>
+            </button>
           ) : (
             <span className="text-muted-foreground">—</span>
           ),
@@ -182,6 +189,11 @@ export function SalesManager() {
           />
         </DialogContent>
       </Dialog>
+
+      <SalesCampaignsDialog
+        salesPerson={campaignsFor}
+        onClose={() => setCampaignsFor(null)}
+      />
 
       {confirmDialog}
     </div>
