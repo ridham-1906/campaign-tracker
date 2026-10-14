@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import { formatDate, lifecycleState } from "@/lib/campaign";
@@ -10,7 +11,6 @@ import {
   useUserOptions,
 } from "@/lib/queries/dashboard";
 import { useEntityOptions } from "@/lib/queries/entities";
-import { CampaignLocationsTable } from "@/components/campaign-locations-table";
 import { SimpleCombobox } from "@/components/simple-combobox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,6 +74,7 @@ const NO_FILTERS: Filters = {
  * only means anything because the list is *not* filtered to the viewer.
  */
 export function Dashboard() {
+  const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const table = useTableState();
@@ -120,11 +121,6 @@ export function Dashboard() {
     setFilters(NO_FILTERS);
     table.toFirstPage();
   }
-
-  const renderLocations = useCallback(
-    (c: Row) => <CampaignLocationsTable locations={c.locations} />,
-    [],
-  );
 
   const columns = useMemo<ColumnDef<Row>[]>(
     () => [
@@ -302,7 +298,7 @@ export function Dashboard() {
             searchPlaceholder="Search client, sales, location…"
             isLoading={query.isLoading}
             isFetching={query.isFetching}
-            renderExpanded={renderLocations}
+            onRowClick={(c) => router.push(`/campaigns/${c.id}`)}
             empty={
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {table.debouncedSearch || anyFilter || statusFilter !== "all"

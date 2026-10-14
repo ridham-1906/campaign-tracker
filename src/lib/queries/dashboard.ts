@@ -20,12 +20,16 @@ import type {
  * endpoints and a separate query key: `/api/dashboard` is unscoped, so caching
  * it under `campaigns` would let one screen serve the other's rows.
  */
-export function useDashboardQuery(params: ListKeyParams) {
+export function useDashboardQuery(
+  params: ListKeyParams,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: queryKeys.dashboard.list(params),
     queryFn: () =>
       apiJson<Page<CampaignListView>>(`/api/dashboard${listQuery(params)}`),
     placeholderData: keepPreviousData,
+    enabled,
   });
 }
 

@@ -641,6 +641,7 @@ export async function getCampaign(
     .populate("salesId", "name email")
     .populate("clientId", "name")
     .populate("locations.vendorId", "name")
+    .populate("userId", "name email")
     .lean();
   if (!r) return null;
 
@@ -696,6 +697,7 @@ export async function getCampaign(
     id: campaignId,
     client: personFrom(r.clientId as LeanRef),
     sales: personFrom(r.salesId as LeanRef),
+    owner: personFrom(r.userId as LeanRef),
     category: r.category ?? "",
     term: r.term ?? 1,
     termHistory: (r.termHistory ?? []).map((t) => ({
