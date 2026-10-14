@@ -44,16 +44,16 @@ function stateOf(l: { status: string; endDate: string | Date }) {
  * used to live in that row's "…" menu: send reminder, remind vendor, edit,
  * renew, delete.
  *
- * Read-only for an admin viewing another user's campaign, same gating the
- * list rows already apply — see `isOwn` in campaign-manager.tsx.
+ * Readable by any signed-in user, same as the Dashboard row it's reached
+ * from (see the GET handler's comment); read-only unless the viewer owns it
+ * — same gating the list rows already apply, see `isOwn` in
+ * campaign-manager.tsx.
  */
 export function CampaignDetail({
   id,
-  isAdmin,
   currentUserId,
 }: {
   id: string;
-  isAdmin: boolean;
   currentUserId: string;
 }) {
   const router = useRouter();
@@ -187,7 +187,7 @@ export function CampaignDetail({
             <p className="text-sm text-muted-foreground">
               {c.sales.name}
               {c.category && ` · ${c.category}`}
-              {isAdmin && c.owner && ` · Backend: ${c.owner.name}`}
+              {!isOwn && c.owner && ` · Backend: ${c.owner.name}`}
             </p>
           </div>
 

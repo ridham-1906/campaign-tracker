@@ -6,7 +6,7 @@ import {
   updateCampaignForUser,
   validateRefs,
 } from "@/lib/services";
-import { authGuard, badRequest, notFound, ok, readJson, readScope } from "@/lib/api";
+import { authGuard, badRequest, notFound, ok, readJson } from "@/lib/api";
 import { locationSchema } from "../route";
 
 export const runtime = "nodejs";
@@ -39,10 +39,13 @@ export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
   if (!isValidId(id)) return notFound("Campaign not found");
 
-  // Admins can view any campaign (for the Images preview/PPT export), but
-  // PATCH/DELETE below stay scoped to the caller's own userId — this is a
-  // read-only widening, never a write one.
-  const view = await getCampaign(readScope(auth.session), id);
+  // Unscoped on purpose, for every signed-in user, not just admins: the
+  // campaign page is reached by clicking a row on /dashboard, which already
+  // lists every user's campaigns to everyone (see api/dashboard/route.ts) —
+  // scoping this read would turn most of those rows into a dead end. PATCH/
+  // DELETE below stay scoped to the caller's own userId; this is a read-only
+  // widening, never a write one.
+  const view = await getCampaign(null, id);
   if (!view) return notFound("Campaign not found");
   return ok(view);
 }
