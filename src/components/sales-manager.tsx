@@ -28,7 +28,13 @@ import type { SalesCountView } from "@/lib/view-types";
 
 type Item = SalesCountView;
 
-export function SalesManager() {
+export function SalesManager({
+  isAdmin,
+  currentUserId,
+}: {
+  isAdmin: boolean;
+  currentUserId: string;
+}) {
   const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
@@ -193,6 +199,8 @@ export function SalesManager() {
       <SalesCampaignsDialog
         salesPerson={campaignsFor}
         onClose={() => setCampaignsFor(null)}
+        isAdmin={isAdmin}
+        currentUserId={currentUserId}
       />
 
       {confirmDialog}

@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { lifecycleState } from "@/lib/campaign";
 import { useDashboardQuery } from "@/lib/queries/dashboard";
 import {
@@ -21,14 +22,24 @@ function stateOf(l: CampaignListLocationView) {
  * campaigns, filtered to this sales person) rather than `/api/campaigns`,
  * since a sales person can be on campaigns belonging to more than one backend
  * user — hence the Backend column.
+ *
+ * A row's own campaign page is admin-or-owner only (see campaign-detail.tsx),
+ * so a row here for someone else's campaign isn't a real link — clicking it
+ * just says so, the same way the Dashboard's own row click does, rather than
+ * navigating to a "not found" page it can never resolve.
  */
 export function SalesCampaignsDialog({
   salesPerson,
   onClose,
+  isAdmin,
+  currentUserId,
 }: {
   salesPerson: { id: string; name: string } | null;
   onClose: () => void;
+  isAdmin: boolean;
+  currentUserId: string;
 }) {
+  const router = useRouter();
   const query = useDashboardQuery(
     { salesId: salesPerson?.id, page: 1, limit: 100 },
     { enabled: Boolean(salesPerson) },
@@ -75,13 +86,20 @@ export function SalesCampaignsDialog({
                   return (
                     <tr key={c.id} className="border-t">
                       <td className="py-2 pr-4">
-                        <Link
-                          href={`/campaigns/${c.id}`}
-                          onClick={onClose}
+                        <button
+                          type="button"
                           className="font-medium hover:underline"
+                          onClick={() => {
+                            if (isAdmin || !c.owner || c.owner.id === currentUserId) {
+                              onClose();
+                              router.push(`/campaigns/${c.id}`);
+                            } else {
+                              toast.error("You can only open your own campaigns");
+                            }
+                          }}
                         >
                           {c.client.name}
-                        </Link>
+                        </button>
                       </td>
                       <td className="py-2 pr-4 text-muted-foreground">{c.sales.name}</td>
                       <td className="py-2 pr-4">
