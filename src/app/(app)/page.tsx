@@ -11,7 +11,7 @@ import { Dashboard } from "@/components/dashboard";
  * filter against the database.
  */
 export default async function DashboardPage() {
-  await requireSession();
+  const session = await requireSession();
 
-  return <Dashboard />;
+  return <Dashboard isAdmin={session.isAdmin} currentUserId={session.userId} />;
 }

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "@/lib/utils";
 import { formatDate, lifecycleState } from "@/lib/campaign";
@@ -72,8 +73,20 @@ const NO_FILTERS: Filters = {
  * campaigns are actually created and edited. This one answers "what is the team
  * running right now" — hence the Backend column naming who owns each row, which
  * only means anything because the list is *not* filtered to the viewer.
+ *
+ * A row's own campaign page (/campaigns/:id) is admin-or-owner only, though —
+ * so clicking into someone else's row here would otherwise land on a "not
+ * found" page it can never resolve. `isAdmin`/`currentUserId` let the row
+ * click check that first and simply not navigate when it's not theirs,
+ * instead of bouncing them to a dead end.
  */
-export function Dashboard() {
+export function Dashboard({
+  isAdmin,
+  currentUserId,
+}: {
+  isAdmin: boolean;
+  currentUserId: string;
+}) {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<CampaignStatusFilter>("all");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
@@ -298,7 +311,13 @@ export function Dashboard() {
             searchPlaceholder="Search client, sales, location…"
             isLoading={query.isLoading}
             isFetching={query.isFetching}
-            onRowClick={(c) => router.push(`/campaigns/${c.id}`)}
+            onRowClick={(c) => {
+              if (isAdmin || !c.owner || c.owner.id === currentUserId) {
+                router.push(`/campaigns/${c.id}`);
+              } else {
+                toast.error("You can only open your own campaigns");
+              }
+            }}
             empty={
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {table.debouncedSearch || anyFilter || statusFilter !== "all"
