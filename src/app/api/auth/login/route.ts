@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { connectDB } from "@/lib/db";
 import { User } from "@/models";
-import { createSession, isAdminEmail, verifyPassword } from "@/lib/auth";
+import { createSession, verifyPassword } from "@/lib/auth";
 import { badRequest, ok, readJson } from "@/lib/api";
 
 export const runtime = "nodejs";
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     userId: user._id.toString(),
     name: user.name,
     email: user.email,
-    isAdmin: isAdminEmail(user.email),
+    isAdmin: user.isAdmin === true,
   });
 
   return ok({

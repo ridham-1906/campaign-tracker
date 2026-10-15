@@ -8,10 +8,10 @@ export type SessionPayload = {
   userId: string;
   name: string;
   email: string;
-  /** Whether this account is listed in ADMIN_EMAILS — grants cross-user
-   * read visibility on the Campaigns/Images pages. Computed once at login,
-   * not re-derived per request, so changing ADMIN_EMAILS takes effect on the
-   * next login rather than the next request. */
+  /** Cross-user read visibility on the Dashboard/Campaigns/Images pages.
+   * This claim is a snapshot from login only — getSession() in lib/auth.ts
+   * re-reads the live value off the User document on every request, so this
+   * field being stale in an old cookie never matters in practice. */
   isAdmin: boolean;
 };
 

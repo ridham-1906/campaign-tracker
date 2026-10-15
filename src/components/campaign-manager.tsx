@@ -79,8 +79,9 @@ export function CampaignManager({
   isAdmin = false,
   currentUserId,
 }: {
-  /** True for an ADMIN_EMAILS account — every user's campaigns show up here,
-   * with an Owner column, but only the admin's own rows stay editable. */
+  /** True for an admin account (User.isAdmin) — every user's campaigns show
+   * up here, with an Owner column, but only the admin's own rows stay
+   * editable. */
   isAdmin?: boolean;
   currentUserId?: string;
 }) {

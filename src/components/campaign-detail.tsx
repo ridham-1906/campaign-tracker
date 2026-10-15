@@ -44,10 +44,12 @@ function stateOf(l: { status: string; endDate: string | Date }) {
  * used to live in that row's "…" menu: send reminder, remind vendor, edit,
  * renew, delete.
  *
- * Readable by any signed-in user, same as the Dashboard row it's reached
- * from (see the GET handler's comment); read-only unless the viewer owns it
- * — same gating the list rows already apply, see `isOwn` in
- * campaign-manager.tsx.
+ * Only an admin or the campaign's own owner can actually open this page — see
+ * the GET handler's comment in api/campaigns/[id]/route.ts; anyone else gets
+ * the "not found" state below, even though the Dashboard lists every user's
+ * campaigns to everyone. Read-only (no action buttons) for an admin viewing
+ * someone else's — see `isOwn` below, same gating `isOwn` in
+ * campaign-manager.tsx applies to the list rows.
  */
 export function CampaignDetail({
   id,
@@ -185,7 +187,7 @@ export function CampaignDetail({
               )}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {c.sales.name}
+              Sales: {c.sales.name}
               {c.category && ` · ${c.category}`}
               {!isOwn && c.owner && ` · Backend: ${c.owner.name}`}
             </p>

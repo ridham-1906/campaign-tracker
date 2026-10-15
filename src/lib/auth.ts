@@ -14,15 +14,6 @@ import {
 
 export type { SessionPayload };
 
-/** Whether this email is listed in ADMIN_EMAILS — see SessionPayload.isAdmin. */
-export function isAdminEmail(email: string) {
-  const list = process.env.ADMIN_EMAILS ?? "";
-  return list
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .includes(email.toLowerCase());
-}
-
 export async function hashPassword(plain: string) {
   return bcrypt.hash(plain, 10);
 }
@@ -63,11 +54,16 @@ export async function getSession(): Promise<SessionPayload | null> {
   // Component renders too, so just report "no session" here; the stale
   // cookie is harmless since this check keeps failing until a real login
   // overwrites it.
+  //
+  // `isAdmin` is read fresh from this same lookup rather than trusted from
+  // the JWT: it's a live flag on the User document (see models/user.ts), so
+  // flipping it takes effect on the very next request — no stale cookie to
+  // wait out, unlike the old ADMIN_EMAILS-at-login design this replaced.
   await connectDB();
-  const exists = await User.exists({ _id: session.userId });
-  if (!exists) return null;
+  const user = await User.findById(session.userId, { isAdmin: 1 });
+  if (!user) return null;
 
-  return session;
+  return { ...session, isAdmin: user.isAdmin === true };
 }
 
 /** Use in server components / actions that require a logged-in user. */
